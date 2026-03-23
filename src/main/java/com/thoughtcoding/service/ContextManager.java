@@ -66,20 +66,21 @@ public class ContextManager {
 
         List<ChatMessage> result;
 
-        micro_compact(fullHistory);
+        //自动压缩超过三轮的工具调用结果
+        List<ChatMessage> afterMicro = micro_compact(fullHistory);
 
         switch (strategy) {
             case SLIDING_WINDOW:
-                result = applySlidingWindow(fullHistory);
+                result = applySlidingWindow(afterMicro);
                 break;
             case TOKEN_BASED:
-                result = applyTokenLimit(fullHistory);
+                result = applyTokenLimit(afterMicro);
                 break;
             case HYBRID:
-                result = applyHybridStrategy(fullHistory);
+                result = applyHybridStrategy(afterMicro);
                 break;
             default:
-                result = fullHistory;
+                result = afterMicro;
         }
 
         // 输出统计信息
@@ -295,31 +296,38 @@ public class ContextManager {
         }
     }
 
-    private void micro_compact(List<ChatMessage> messages) {
+    private List<ChatMessage> micro_compact(List<ChatMessage> messages) {
+        // sessions中保存结果不变，不可修改messages，使用深拷贝：创建全新消息对象
+        List<ChatMessage> result = new ArrayList<>();
+        for (ChatMessage msg : messages) {
+            result.add(new ChatMessage(msg)); // 使用复制构造器
+        }
+
+        // 收集工具结果消息（在 result 中）
         List<ChatMessage> toolResults = new ArrayList<>();
-        for(ChatMessage msg  : messages) {
-            if(msg != null && msg.getRole().equals("system") && isToolResultMessage(msg.getContent())) {
-                toolResults .add(msg);
+        for (ChatMessage msg : result) {
+            if (msg != null && msg.getRole().equals("system") && isToolResultMessage(msg.getContent())) {
+                toolResults.add(msg);
             }
         }
 
         int KEEP_RECENT = DEFAULT_KEEP_RECENT;
-        if(toolResults.size() <= KEEP_RECENT){
-            return;
+        if (toolResults.size() <= KEEP_RECENT) {
+            return result; // 不需要压缩，返回深拷贝副本
         }
 
-        // 需要压缩的早期消息（除了最后 KEEP_RECENT 条）
+        // 压缩早期的工具结果（除了最后 KEEP_RECENT 条）
         List<ChatMessage> toCompact = toolResults.subList(0, toolResults.size() - KEEP_RECENT);
-
-        for(ChatMessage msg : toCompact){
+        for (ChatMessage msg : toCompact) {
             String content = msg.getContent();
-            // 如果内容较长（超过100字符），则压缩为摘要
-            if(content != null && content.length() > 100) {
+            if (content != null && content.length() > 100) {
                 String toolName = extractToolNameFromContent(content);
                 String summary = String.format("[Previous: used %s]", toolName);
                 msg.setContent(summary);
             }
         }
+
+        return result;
     }
 
     private boolean isToolResultMessage(String content) {
