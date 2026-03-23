@@ -51,6 +51,15 @@ public class ChatMessage {
         this.sessionId = sessionId;
     }
 
+    //深拷贝构造器
+    public ChatMessage(ChatMessage other) {
+        this.id = other.id;
+        this.role = other.role;
+        this.content = other.content;
+        this.timestamp = other.timestamp;
+        this.sessionId = other.sessionId;
+    }
+
     // 添加静态工厂方法
     public static ChatMessage from(String content) {
         return new ChatMessage("assistant", content); // 默认角色为 "assistant"
