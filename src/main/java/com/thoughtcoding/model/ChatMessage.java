@@ -14,7 +14,7 @@ import java.util.UUID;
 public class ChatMessage {
     private final String id;
     private final String role; // "user", "assistant", "system"
-    private final String content;
+    private String content; //压缩工具结果需要其为变量
     private final String timestamp;
     private final String sessionId;
     @JsonIgnore  // 忽略这些字段的序列化
@@ -49,6 +49,15 @@ public class ChatMessage {
         this.content = content;
         this.timestamp = String.valueOf(LocalDateTime.now());
         this.sessionId = sessionId;
+    }
+
+    //深拷贝构造器
+    public ChatMessage(ChatMessage other) {
+        this.id = other.id;
+        this.role = other.role;
+        this.content = other.content;
+        this.timestamp = other.timestamp;
+        this.sessionId = other.sessionId;
     }
 
     // 添加静态工厂方法
@@ -86,6 +95,10 @@ public class ChatMessage {
 
     public void setContent() {
         String content = "";
+    }
+
+    public void setContent(String content) {
+        this.content = content;
     }
 
     public void setTimestamp(String s) {

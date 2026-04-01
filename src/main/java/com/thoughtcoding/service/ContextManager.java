@@ -25,6 +25,7 @@ public class ContextManager {
     private static final int DEFAULT_MAX_HISTORY_TURNS = 10;  // 保留10轮（20条消息）
     private static final int DEFAULT_MAX_CONTEXT_TOKENS = 3000;  // 为历史预留3000 tokens
     private static final int DEFAULT_RESERVE_TOKENS = 1000;  // 为响应预留1000 tokens
+    private static final int DEFAULT_KEEP_RECENT = 3; // 保留3轮（三轮以上的tool_result将被清除）
 
     // 策略枚举
     public enum Strategy {
@@ -65,18 +66,21 @@ public class ContextManager {
 
         List<ChatMessage> result;
 
+        //自动压缩超过三轮的工具调用结果
+        List<ChatMessage> afterMicro = micro_compact(fullHistory);
+
         switch (strategy) {
             case SLIDING_WINDOW:
-                result = applySlidingWindow(fullHistory);
+                result = applySlidingWindow(afterMicro);
                 break;
             case TOKEN_BASED:
-                result = applyTokenLimit(fullHistory);
+                result = applyTokenLimit(afterMicro);
                 break;
             case HYBRID:
-                result = applyHybridStrategy(fullHistory);
+                result = applyHybridStrategy(afterMicro);
                 break;
             default:
-                result = fullHistory;
+                result = afterMicro;
         }
 
         // 输出统计信息
@@ -289,6 +293,71 @@ public class ContextManager {
         } catch (Exception e) {
             log.warn("无法构建项目上下文: {}", e.getMessage());
             return null;
+        }
+    }
+
+    private List<ChatMessage> micro_compact(List<ChatMessage> messages) {
+        // sessions中保存结果不变，不可修改messages，使用深拷贝：创建全新消息对象
+        List<ChatMessage> result = new ArrayList<>();
+        for (ChatMessage msg : messages) {
+            result.add(new ChatMessage(msg)); // 使用复制构造器
+        }
+
+        // 收集工具结果消息（在 result 中）
+        List<ChatMessage> toolResults = new ArrayList<>();
+        for (ChatMessage msg : result) {
+            if (msg != null && msg.getRole().equals("system") && isToolResultMessage(msg.getContent())) {
+                toolResults.add(msg);
+            }
+        }
+
+        int KEEP_RECENT = DEFAULT_KEEP_RECENT;
+        if (toolResults.size() <= KEEP_RECENT) {
+            return result; // 不需要压缩，返回深拷贝副本
+        }
+
+        // 压缩早期的工具结果（除了最后 KEEP_RECENT 条）
+        List<ChatMessage> toCompact = toolResults.subList(0, toolResults.size() - KEEP_RECENT);
+        for (ChatMessage msg : toCompact) {
+            String content = msg.getContent();
+            if (content != null && content.length() > 100) {
+                String toolName = extractToolNameFromContent(content);
+                String summary = String.format("[Previous: used %s]", toolName);
+                msg.setContent(summary);
+            }
+        }
+
+        return result;
+    }
+
+    private boolean isToolResultMessage(String content) {
+        if (content == null) return false;
+        // 工具成功或失败消息的特征前缀
+        return content.startsWith("Tool '") || content.startsWith("Tool execution failed: ");
+    }
+
+    // 从消息内容中提取工具名称
+    // 格式示例: "Tool 'read_file' executed successfully ..." 或 "Tool execution failed: 'unknown_tool' not found."
+    private String extractToolNameFromContent(String content) {
+        try {
+            // 查找单引号之间的内容
+            int start = content.indexOf('\'');
+            int end = content.indexOf('\'', start + 1);
+            if (start != -1 && end != -1) {
+                return content.substring(start + 1, end);
+            }
+            // 降级处理：尝试匹配 "Tool execution failed: " 后的内容
+            if (content.startsWith("Tool execution failed: ")) {
+                String after = content.substring("Tool execution failed: ".length());
+                int space = after.indexOf(' ');
+                if (space > 0) {
+                    return after.substring(0, space);
+                }
+                return "unknown";
+            }
+            return "unknown";
+        } catch (Exception e) {
+            return "unknown";
         }
     }
 
