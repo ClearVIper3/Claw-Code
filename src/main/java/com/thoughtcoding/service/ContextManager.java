@@ -1,10 +1,18 @@
 package com.thoughtcoding.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import com.thoughtcoding.config.AppConfig;
 import com.thoughtcoding.model.ChatMessage;
+import dev.langchain4j.data.message.UserMessage;
+import dev.langchain4j.model.chat.response.ChatResponse;
+import dev.langchain4j.model.openai.OpenAiChatModel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -38,8 +46,17 @@ public class ContextManager {
     private int maxHistoryTurns = DEFAULT_MAX_HISTORY_TURNS;
     private int maxContextTokens = DEFAULT_MAX_CONTEXT_TOKENS;
 
+    private static final Path TRANSCRIPT_DIR = Paths.get("transcripts");
+    private final ObjectMapper objectMapper;
+
+    private OpenAiChatModel ChatModel;
+
     public ContextManager(AppConfig appConfig) {
         this.appConfig = appConfig;
+        this.objectMapper = new ObjectMapper()
+                .enable(SerializationFeature.INDENT_OUTPUT)
+                .disable(SerializationFeature.FAIL_ON_EMPTY_BEANS);
+        initializeChatModel();
         loadConfiguration();
     }
 
@@ -50,6 +67,29 @@ public class ContextManager {
         // TODO: 从 config.yaml 读取配置
         // 目前使用默认值
         // 🔥 移除初始化日志，保持输出简洁
+    }
+
+    private void initializeChatModel() {
+        try {
+            AppConfig.ModelConfig modelConfig = appConfig.getModelConfig(appConfig.getDefaultModel());
+            if (modelConfig != null) {
+                this.ChatModel = createDeepSeekModel(modelConfig);
+            }
+        } catch (Exception e) {
+            System.err.println("初始化模型失败: " + e.getMessage());
+        }
+    }
+
+    private OpenAiChatModel createDeepSeekModel(AppConfig.ModelConfig config) {
+        return OpenAiChatModel.builder()
+                .baseUrl(config.getBaseURL())
+                .apiKey(config.getApiKey())
+                .modelName(config.getName())
+                .temperature(config.getTemperature())
+                .maxTokens(config.getMaxTokens())
+                .logRequests(false)
+                .logResponses(false)
+                .build();
     }
 
     /**
@@ -74,10 +114,10 @@ public class ContextManager {
                 result = applySlidingWindow(afterMicro);
                 break;
             case TOKEN_BASED:
-                result = applyTokenLimit(afterMicro);
+                result = applyTokenLimit(fullHistory,afterMicro);
                 break;
             case HYBRID:
-                result = applyHybridStrategy(afterMicro);
+                result = applyHybridStrategy(fullHistory,afterMicro);
                 break;
             default:
                 result = afterMicro;
@@ -381,43 +421,66 @@ public class ContextManager {
      * 策略2：Token 控制
      * 根据 Token 数量动态截断
      */
-    private List<ChatMessage> applyTokenLimit(List<ChatMessage> fullHistory) {
-        List<ChatMessage> result = new ArrayList<>();
+    private List<ChatMessage> applyTokenLimit(List<ChatMessage> fullHistory,List<ChatMessage> afterMicro) {
         int totalTokens = 0;
 
-        // 从最新消息开始倒序添加
-        for (int i = fullHistory.size() - 1; i >= 0; i--) {
-            ChatMessage msg = fullHistory.get(i);
+        for(int i = 0; i < afterMicro.size(); i++) {
+            ChatMessage msg = afterMicro.get(i);
             int msgTokens = estimateTokens(msg.getContent());
 
-            // 检查是否超过限制
-            if (totalTokens + msgTokens > maxContextTokens) {
-                // 如果这是第一条消息且超过限制，截断它
-                if (result.isEmpty()) {
-                    String truncatedContent = truncateToTokenLimit(msg.getContent(), maxContextTokens);
-                    ChatMessage truncatedMsg = new ChatMessage(msg.getRole(), truncatedContent);
-                    result.add(0, truncatedMsg);
-                }
-                break;
-            }
-
-            result.add(0, msg);  // 添加到开头
             totalTokens += msgTokens;
         }
 
-        return result;
+        if(totalTokens < maxContextTokens){
+            return afterMicro;
+        }
+
+        try{
+            // 1. 生成对话文本
+            // 精准切分：保留最后 2 条记录（通常是最后一轮 User 问 + AI 答）
+            int keepCount = Math.min(2, fullHistory.size());
+            int splitIndex = fullHistory.size() - keepCount;
+
+            List<ChatMessage> toSummarize = fullHistory.subList(0, splitIndex);
+            List<ChatMessage> tailMessages = new ArrayList<>(fullHistory.subList(splitIndex, fullHistory.size()));
+
+            String conversationText = truncateConversation(toSummarize);
+
+            // 2. 构建摘要 prompt
+            String prompt = "Summarize this conversation for continuity. Include: " +
+                    "1) What was accomplished, 2) Current state, 3) Key decisions made. " +
+                    "Be concise but preserve critical details.\n\n" + conversationText;
+
+            // 3. 调用 LLM 生成摘要
+            String summary = callLlmForSummary(prompt);
+
+            // 4. 构建压缩后的消息列表
+            String sessionId = afterMicro.get(0).getSessionId();
+            fullHistory.clear();
+
+            // 构建新的消息历史
+            fullHistory.add(new ChatMessage("user",
+                    "[Conversation compressed.]" + "\n\n" + summary,sessionId));
+
+            // 重新接上尾部对话，保证上下文连贯
+            fullHistory.addAll(tailMessages);
+
+            return fullHistory;
+        } catch (Exception e){
+            return afterMicro;
+        }
     }
 
     /**
      * 策略3：混合策略
      * 先应用滑动窗口，再应用 Token 控制
      */
-    private List<ChatMessage> applyHybridStrategy(List<ChatMessage> fullHistory) {
+    private List<ChatMessage> applyHybridStrategy(List<ChatMessage> fullHistory,List<ChatMessage> afterMicro) {
         // 1. 先应用滑动窗口
         List<ChatMessage> windowedHistory = applySlidingWindow(fullHistory);
 
         // 2. 再应用 Token 控制
-        return applyTokenLimit(windowedHistory);
+        return applyTokenLimit(windowedHistory,afterMicro);
     }
 
     /**
@@ -492,6 +555,22 @@ public class ContextManager {
                     fullTokens - managedTokens,
                     (fullTokens - managedTokens) * 100 / Math.max(fullTokens, 1));
         }
+    }
+
+    /**
+     * 将消息列表转换为 JSON 字符串（用于传给 LLM）
+     */
+    private String truncateConversation(List<ChatMessage> messages) {
+        try {
+            return objectMapper.writeValueAsString(messages);
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to serialize messages", e);
+        }
+    }
+
+    private String callLlmForSummary(String prompt) {
+        ChatResponse response = ChatModel.chat(UserMessage.from(prompt));
+        return response.aiMessage().text();
     }
 
     /**
