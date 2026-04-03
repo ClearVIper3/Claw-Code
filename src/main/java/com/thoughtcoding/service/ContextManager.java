@@ -1,10 +1,15 @@
 package com.thoughtcoding.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import com.thoughtcoding.config.AppConfig;
 import com.thoughtcoding.model.ChatMessage;
+import dev.langchain4j.model.openai.OpenAiChatModel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -38,8 +43,17 @@ public class ContextManager {
     private int maxHistoryTurns = DEFAULT_MAX_HISTORY_TURNS;
     private int maxContextTokens = DEFAULT_MAX_CONTEXT_TOKENS;
 
+    private static final Path TRANSCRIPT_DIR = Paths.get("transcripts");
+    private final ObjectMapper objectMapper;
+
+    private OpenAiChatModel ChatModel;
+
     public ContextManager(AppConfig appConfig) {
         this.appConfig = appConfig;
+        this.objectMapper = new ObjectMapper()
+                .enable(SerializationFeature.INDENT_OUTPUT)
+                .disable(SerializationFeature.FAIL_ON_EMPTY_BEANS);
+        initializeChatModel();
         loadConfiguration();
     }
 
@@ -50,6 +64,29 @@ public class ContextManager {
         // TODO: 从 config.yaml 读取配置
         // 目前使用默认值
         // 🔥 移除初始化日志，保持输出简洁
+    }
+
+    private void initializeChatModel() {
+        try {
+            AppConfig.ModelConfig modelConfig = appConfig.getModelConfig(appConfig.getDefaultModel());
+            if (modelConfig != null) {
+                this.ChatModel = createDeepSeekModel(modelConfig);
+            }
+        } catch (Exception e) {
+            System.err.println("初始化模型失败: " + e.getMessage());
+        }
+    }
+
+    private OpenAiChatModel createDeepSeekModel(AppConfig.ModelConfig config) {
+        return OpenAiChatModel.builder()
+                .baseUrl(config.getBaseURL())
+                .apiKey(config.getApiKey())
+                .modelName(config.getName())
+                .temperature(config.getTemperature())
+                .maxTokens(config.getMaxTokens())
+                .logRequests(false)
+                .logResponses(false)
+                .build();
     }
 
     /**
