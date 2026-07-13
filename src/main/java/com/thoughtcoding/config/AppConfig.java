@@ -112,6 +112,32 @@ public class AppConfig {
         @JsonProperty("timeout")
         private Integer timeout = 60;
 
+        @JsonProperty("reasoning_effort")
+        private String reasoningEffort = "high";
+
+        @JsonProperty("thinking")
+        private Thinking thinking = new Thinking("enabled");
+
+        @Data
+        public static class Thinking{
+            @JsonProperty("type")
+            private String type;
+
+            public Thinking() {}
+
+            public Thinking(String type){
+                this.type = type;
+            }
+
+            public void setType(String type){
+                this.type = type;
+            }
+
+            public String getType(){
+                return type;
+            }
+        }
+
         // Getters and Setters
         public String getName() {
             return name;
@@ -124,6 +150,7 @@ public class AppConfig {
         public String getBaseURL() {
             return baseURL;
         }
+
         public Double getTemperature() {
             return temperature != null ? temperature : 0.7;
         }
@@ -154,6 +181,22 @@ public class AppConfig {
 
         public void setMaxTokens(Integer maxTokens) {
             this.maxTokens = maxTokens;
+        }
+
+        public String getReasoningEffort(){
+            return this.reasoningEffort;
+        }
+
+        public void setReasoningEffort(String reasoningEffort){
+            this.reasoningEffort = reasoningEffort;
+        }
+
+        public Thinking getThinking(){
+            return this.thinking;
+        }
+
+        public void setThinking(Thinking thinking){
+            this.thinking = thinking;
         }
     }
 
