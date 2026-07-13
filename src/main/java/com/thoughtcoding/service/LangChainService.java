@@ -55,10 +55,6 @@ public class LangChainService implements AIService {
     }
 
     private StreamingChatModel createDeepSeekModel(AppConfig.ModelConfig config) {
-        OpenAiChatRequestParameters parms = OpenAiChatRequestParameters.builder()
-                .reasoningEffort("high")
-                .customParameters(Map.of("thinking",Map.of("type", "enabled")))
-                .build();
 
         return OpenAiStreamingChatModel.builder()
                 .baseUrl(config.getBaseURL())
@@ -68,7 +64,10 @@ public class LangChainService implements AIService {
                 .maxTokens(config.getMaxTokens())
                 .logRequests(false)
                 .logResponses(false)
-                .defaultRequestParameters(parms)
+                .defaultRequestParameters(OpenAiChatRequestParameters.builder()
+                        .reasoningEffort(config.getReasoningEffort())
+                        .customParameters(Map.of("thinking",Map.of("type", config.getThinking().getType())))
+                        .build())
                 .build();
     }
 
