@@ -7,9 +7,11 @@ import com.thoughtcoding.tools.ToolRegistry;
 import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.model.chat.response.StreamingChatResponseHandler;
+import dev.langchain4j.model.openai.OpenAiChatRequestParameters;
 import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
@@ -53,6 +55,11 @@ public class LangChainService implements AIService {
     }
 
     private StreamingChatModel createDeepSeekModel(AppConfig.ModelConfig config) {
+        OpenAiChatRequestParameters parms = OpenAiChatRequestParameters.builder()
+                .reasoningEffort("high")
+                .customParameters(Map.of("thinking",Map.of("type", "enabled")))
+                .build();
+
         return OpenAiStreamingChatModel.builder()
                 .baseUrl(config.getBaseURL())
                 .apiKey(config.getApiKey())
@@ -61,6 +68,7 @@ public class LangChainService implements AIService {
                 .maxTokens(config.getMaxTokens())
                 .logRequests(false)
                 .logResponses(false)
+                .defaultRequestParameters(parms)
                 .build();
     }
 
