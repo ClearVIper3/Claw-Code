@@ -1,0 +1,33 @@
+# ThoughtCoding 配置模板
+# 用法：复制为 config.yaml（config.yaml 已被 .gitignore 忽略，不会提交），填入你的 DeepSeek API Key。
+#
+# 验证本次「原生 function calling 迁移」：
+#   - ai.nativeToolCalling: true   走 langchain4j 原生工具调用（本次迁移）
+#   - ai.nativeToolCalling: false  走旧的文本抓取（回归对照）
+#   - 必须使用【支持 function calling 的】DeepSeek 模型，否则原生模式会报错。
+
+models:
+  deepseek-chat:
+    name: deepseek-chat                     # ← 换成你账号下支持 function calling 的模型
+    baseURL: https://api.deepseek.com/v1
+    apiKey: YOUR_DEEPSEEK_API_KEY_HERE       # ← 填入你的 API Key
+    streaming: true
+    maxTokens: 4096
+    temperature: 0.7
+
+defaultModel: deepseek-chat
+
+ai:
+  nativeToolCalling: true       # 🔥 true=原生工具调用；先用它测试，若端点不支持再设 false 回退
+  autoProcessToolResults: true  # 🔥 true=工具结果自动回喂模型，形成 agentic 多轮循环
+  maxToolIterations: 10         # 单次用户输入内的最大工具轮次上限
+
+tools:
+  fileManager:
+    enabled: true
+  commandExec:
+    enabled: true
+  codeExecutor:
+    enabled: true
+  search:
+    enabled: true

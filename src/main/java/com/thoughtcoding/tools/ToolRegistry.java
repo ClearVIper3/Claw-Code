@@ -73,6 +73,22 @@ public class ToolRegistry implements ToolProvider {
         return !tools.isEmpty();
     }
 
+    /**
+     * 🔥 把所有已启用工具（内置 + MCP）映射为 langchain4j 原生 ToolSpecification，
+     * 在每次请求时调用以纳入运行时连接的 MCP 工具。单个工具转换失败时跳过，不阻塞整次请求。
+     */
+    public java.util.List<dev.langchain4j.agent.tool.ToolSpecification> getToolSpecifications() {
+        java.util.List<dev.langchain4j.agent.tool.ToolSpecification> specs = new ArrayList<>();
+        for (BaseTool tool : tools.values()) {
+            try {
+                specs.add(ToolSpecificationFactory.build(tool));
+            } catch (Exception e) {
+                // 跳过无法生成 spec 的工具
+            }
+        }
+        return specs;
+    }
+
     //内置工具直接实例化注册
     private boolean isToolEnabled(String toolName) {
         // 检查配置中是否启用了该工具

@@ -126,7 +126,8 @@ public class ContextManager {
         // 输出统计信息
         logContextStatistics(fullHistory, result);
 
-        return result;
+        // 🔥 保证发给模型的历史工具调用/结果配对一致（防止压缩裁剪导致孤立 id → 模型 400）
+        return sanitizeToolPairs(result);
     }
 
     /**
@@ -140,6 +141,12 @@ public class ContextManager {
             String cwd = System.getProperty("user.dir");
             if (cwd == null || cwd.isEmpty()) {
                 return null;
+            }
+
+            // 🔥 原生 function calling 模式：使用简短的 native 系统提示（不含 ⏺/write_file 文本抓取指令）
+            boolean useNative = appConfig.getAi() != null && appConfig.getAi().isNativeToolCalling();
+            if (useNative) {
+                return new ChatMessage("system", buildNativeSystemPrompt(cwd));
             }
 
             StringBuilder context = new StringBuilder();
@@ -336,6 +343,86 @@ public class ContextManager {
         }
     }
 
+    /**
+     * 🔥 原生 function calling 的简短系统提示：只讲角色/语言/工具概览，不含任何 ⏺/write_file 文本抓取语法。
+     */
+    private String buildNativeSystemPrompt(String cwd) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("## 指令\n");
+        sb.append("- 始终用中文回答用户的所有问题，解释与代码注释也用中文。\n");
+        sb.append("- 你是一位资深编程助手（类似 Claude Code），可调用工具完成任务。\n\n");
+
+        sb.append("## 工作环境\n");
+        sb.append("工作目录: ").append(cwd).append("\n");
+        sb.append("路径支持：相对路径、绝对路径、~ 用户主目录、.. 上级目录。\n\n");
+
+        sb.append("## 可用工具\n");
+        sb.append("系统会执行你请求的工具并把结果返回给你，你据此继续，直到任务完成：\n");
+        sb.append("- file_manager：读写/列目录/创建/删除/信息（command: read|write|list|create|delete|info；path；write 时带 content）\n");
+        sb.append("- command_executor：执行 shell 命令（command）\n");
+        sb.append("- code_executor：运行代码片段（language: java|python|javascript；code）\n");
+        sb.append("- grep_search：搜索文本（pattern；path）\n\n");
+
+        sb.append("## 规则\n");
+        sb.append("1. 需要操作时直接调用工具，不要把工具名或命令写进普通文本，也不要编造工具结果。\n");
+        sb.append("2. 写文件用 file_manager(command=write, path, content)；需要编译/运行时再调用 command_executor。\n");
+        sb.append("3. 只在确有需要时调用工具；纯咨询类问题直接用中文回答，不调用工具。\n");
+        sb.append("4. 完成任务后用简洁自然的中文给出总结。\n");
+        return sb.toString();
+    }
+
+    /**
+     * 🔥 保证发给模型的历史中工具调用/结果配对一致（无论压缩如何裁剪）：
+     *  - 丢弃没有对应 assistant 工具调用的孤立 role=tool 结果；
+     *  - assistant 消息里剥掉没有对应结果的 toolCalls（非破坏性：修改副本，不动原始历史）。
+     * 违反 "assistant 工具调用必须紧跟同 id 的 tool 结果" 会导致模型 400。
+     */
+    private List<ChatMessage> sanitizeToolPairs(List<ChatMessage> history) {
+        if (history == null || history.isEmpty()) {
+            return history;
+        }
+
+        java.util.Set<String> resultIds = new java.util.HashSet<>();
+        java.util.Set<String> callIds = new java.util.HashSet<>();
+        for (ChatMessage m : history) {
+            if (m.isToolMessage() && m.getToolCallId() != null) {
+                resultIds.add(m.getToolCallId());
+            }
+            if (m.getToolCalls() != null) {
+                for (com.thoughtcoding.model.ToolCallRef r : m.getToolCalls()) {
+                    if (r.getId() != null) callIds.add(r.getId());
+                }
+            }
+        }
+
+        List<ChatMessage> out = new ArrayList<>(history.size());
+        for (ChatMessage m : history) {
+            if (m.isToolMessage()) {
+                if (m.getToolCallId() == null || !callIds.contains(m.getToolCallId())) {
+                    continue; // 孤立工具结果 → 丢弃
+                }
+                out.add(m);
+            } else if (m.getToolCalls() != null && !m.getToolCalls().isEmpty()) {
+                List<com.thoughtcoding.model.ToolCallRef> kept = new ArrayList<>();
+                for (com.thoughtcoding.model.ToolCallRef r : m.getToolCalls()) {
+                    if (r.getId() != null && resultIds.contains(r.getId())) {
+                        kept.add(r);
+                    }
+                }
+                if (kept.size() == m.getToolCalls().size()) {
+                    out.add(m); // 全部有结果，原样保留
+                } else {
+                    ChatMessage copy = new ChatMessage(m); // 非破坏性：改副本
+                    copy.setToolCalls(kept.isEmpty() ? null : kept);
+                    out.add(copy);
+                }
+            } else {
+                out.add(m);
+            }
+        }
+        return out;
+    }
+
     private List<ChatMessage> micro_compact(List<ChatMessage> messages) {
         // sessions中保存结果不变，不可修改messages，使用深拷贝：创建全新消息对象
         List<ChatMessage> result = new ArrayList<>();
@@ -343,10 +430,13 @@ public class ContextManager {
             result.add(new ChatMessage(msg)); // 使用复制构造器
         }
 
-        // 收集工具结果消息（在 result 中）
+        // 收集工具结果消息（在 result 中）：原生 role=tool 或旧的 role=system + "Tool '" 前缀
         List<ChatMessage> toolResults = new ArrayList<>();
         for (ChatMessage msg : result) {
-            if (msg != null && msg.getRole().equals("system") && isToolResultMessage(msg.getContent())) {
+            if (msg == null) continue;
+            boolean isNativeToolResult = msg.isToolMessage();
+            boolean isLegacyToolResult = "system".equals(msg.getRole()) && isToolResultMessage(msg.getContent());
+            if (isNativeToolResult || isLegacyToolResult) {
                 toolResults.add(msg);
             }
         }
@@ -356,12 +446,13 @@ public class ContextManager {
             return result; // 不需要压缩，返回深拷贝副本
         }
 
-        // 压缩早期的工具结果（除了最后 KEEP_RECENT 条）
+        // 压缩早期的工具结果（除了最后 KEEP_RECENT 条）——只截断内容，不删除消息、不动 role/toolCallId，保持配对
         List<ChatMessage> toCompact = toolResults.subList(0, toolResults.size() - KEEP_RECENT);
         for (ChatMessage msg : toCompact) {
             String content = msg.getContent();
             if (content != null && content.length() > 100) {
-                String toolName = extractToolNameFromContent(content);
+                String toolName = (msg.isToolMessage() && msg.getToolName() != null)
+                        ? msg.getToolName() : extractToolNameFromContent(content);
                 String summary = String.format("[Previous: used %s]", toolName);
                 msg.setContent(summary);
             }

@@ -86,6 +86,12 @@ public class MCPToolAdapter extends BaseTool {
         return "mcp";
     }
 
+    /** 🔥 暴露 MCP 工具自带的 inputSchema，供 ToolSpecificationFactory 生成原生 ToolSpecification */
+    @Override
+    public Object getInputSchema() {
+        return mcpTool.getInputSchema();
+    }
+
     @Override
     public boolean isEnabled() {
         return mcpClient != null && mcpClient.isConnected();

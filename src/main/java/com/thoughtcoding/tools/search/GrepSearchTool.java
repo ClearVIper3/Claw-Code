@@ -28,13 +28,30 @@ public class GrepSearchTool extends BaseTool {
         long startTime = System.currentTimeMillis();
 
         try {
-            String[] parts = input.split(" ", 2);
-            if (parts.length < 2) {
-                return error("Invalid format. Use: <pattern> <path>", System.currentTimeMillis() - startTime);
+            // 解析 pattern / path：优先 JSON（原生工具参数），否则回退到空格分隔
+            String rawPattern;
+            String rawPath;
+            if (input != null && input.trim().startsWith("{")) {
+                com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+                java.util.Map<String, Object> params = mapper.readValue(input, java.util.Map.class);
+                Object pat = params.get("pattern");
+                Object pth = params.get("path");
+                if (pat == null || pth == null) {
+                    return error("JSON 格式错误：需要 'pattern' 和 'path' 字段", System.currentTimeMillis() - startTime);
+                }
+                rawPattern = pat.toString();
+                rawPath = pth.toString();
+            } else {
+                String[] parts = input.split(" ", 2);
+                if (parts.length < 2) {
+                    return error("Invalid format. Use: <pattern> <path>", System.currentTimeMillis() - startTime);
+                }
+                rawPattern = parts[0];
+                rawPath = parts[1];
             }
 
-            String pattern = parts[0];
-            String searchPath = parts[1];
+            final String pattern = rawPattern;
+            final String searchPath = rawPath;
 
             Path path = Paths.get(searchPath).toAbsolutePath();
 

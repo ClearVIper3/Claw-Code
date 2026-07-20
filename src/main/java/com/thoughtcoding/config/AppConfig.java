@@ -282,7 +282,13 @@ public class AppConfig {
     @Data
     public static class AIConfig {
         @JsonProperty("autoProcessToolResults")
-        private boolean autoProcessToolResults = false; // 默认false：工具执行后直接显示结果，不再反馈给AI
+        private boolean autoProcessToolResults = true; // 默认true：工具执行后把结果反馈给AI，形成 agentic 循环
+
+        @JsonProperty("nativeToolCalling")
+        private boolean nativeToolCalling = false; // 迁移期临时开关：true 走 langchain4j 原生 function calling，false 走旧文本抓取。切换后删除
+
+        @JsonProperty("maxToolIterations")
+        private int maxToolIterations = 10; // agentic 循环单次用户输入内的最大工具轮次上限
 
         public boolean isAutoProcessToolResults() {
             return autoProcessToolResults;
@@ -290,6 +296,22 @@ public class AppConfig {
 
         public void setAutoProcessToolResults(boolean autoProcessToolResults) {
             this.autoProcessToolResults = autoProcessToolResults;
+        }
+
+        public boolean isNativeToolCalling() {
+            return nativeToolCalling;
+        }
+
+        public void setNativeToolCalling(boolean nativeToolCalling) {
+            this.nativeToolCalling = nativeToolCalling;
+        }
+
+        public int getMaxToolIterations() {
+            return maxToolIterations;
+        }
+
+        public void setMaxToolIterations(int maxToolIterations) {
+            this.maxToolIterations = maxToolIterations;
         }
     }
 }

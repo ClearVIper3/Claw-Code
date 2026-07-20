@@ -28,14 +28,27 @@ public class CodeExecutorTool extends BaseTool {
         long startTime = System.currentTimeMillis();
 
         try {
-            // 解析语言和代码
-            String[] parts = input.split(" ", 2);
-            if (parts.length < 2) {
-                return error("Invalid format. Use: <language> <code>", System.currentTimeMillis() - startTime);
+            // 解析语言和代码：优先 JSON（原生工具参数），否则回退到空格分隔
+            String language;
+            String code;
+            if (input != null && input.trim().startsWith("{")) {
+                com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+                java.util.Map<String, Object> params = mapper.readValue(input, java.util.Map.class);
+                Object lang = params.get("language");
+                Object c = params.get("code");
+                if (lang == null || c == null) {
+                    return error("JSON 格式错误：需要 'language' 和 'code' 字段", System.currentTimeMillis() - startTime);
+                }
+                language = lang.toString().toLowerCase();
+                code = c.toString();
+            } else {
+                String[] parts = input.split(" ", 2);
+                if (parts.length < 2) {
+                    return error("Invalid format. Use: <language> <code>", System.currentTimeMillis() - startTime);
+                }
+                language = parts[0].toLowerCase();
+                code = parts[1];
             }
-
-            String language = parts[0].toLowerCase();
-            String code = parts[1];
 
             switch (language) {
                 case "java":

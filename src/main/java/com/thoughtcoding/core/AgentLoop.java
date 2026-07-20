@@ -1,11 +1,13 @@
 package com.thoughtcoding.core;
 
+import com.thoughtcoding.config.AppConfig;
 import com.thoughtcoding.model.ChatMessage;
 import com.thoughtcoding.model.ToolCall;
 import com.thoughtcoding.model.ToolExecution;
 import com.thoughtcoding.model.ToolResult;
 import com.thoughtcoding.service.PerformanceMonitor;
 import com.thoughtcoding.tools.BaseTool;
+import com.thoughtcoding.tools.ToolDispatcher;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -30,6 +32,7 @@ public class AgentLoop {
     private final String modelName;
     private final ToolExecutionConfirmation confirmation;  // 🔥 新增：交互式确认组件
     private final OptionManager optionManager;  // 🔥 新增：选项管理器
+    private final ToolDispatcher toolDispatcher;  // 🔥 工具执行唯一收口（沙箱插桩点）
 
     public AgentLoop(ThoughtCodingContext context, String sessionId, String modelName) {
         this.context = context;
@@ -45,6 +48,9 @@ public class AgentLoop {
 
         // 🔥 创建选项管理器
         this.optionManager = new OptionManager();
+
+        // 🔥 创建工具执行收口
+        this.toolDispatcher = new ToolDispatcher(context.getToolRegistry());
 
         // 设置消息和工具调用处理器
         context.getAiService().setMessageHandler(this::handleMessage);
@@ -70,17 +76,23 @@ public class AgentLoop {
             }
 
             // 重置待处理的工具调用
-            pendingToolCall = null;
+            pendingToolCalls.clear();
 
             // 添加用户消息到历史
             ChatMessage userMessage = new ChatMessage("user", input);
             history.add(userMessage);
 
-            // 流式处理AI响应
-            context.getAiService().streamingChat(input, history, modelName);
+            boolean useNative = context.getAppConfig().getAi() != null
+                    && context.getAppConfig().getAi().isNativeToolCalling();
 
-            // 🔥 AI 响应完成后，执行待处理的工具调用
-            executePendingToolCall();
+            if (useNative) {
+                // 🔥 原生 function calling：多轮 agentic 循环
+                runNativeToolLoop();
+            } else {
+                // 旧文本抓取路径：单轮 + 单工具
+                context.getAiService().streamingChat(input, history, modelName);
+                executePendingToolCall();
+            }
 
             // 保存会话
             context.getSessionService().saveSession(sessionId, history);
@@ -133,24 +145,23 @@ public class AgentLoop {
         // 这样可以避免历史记录中出现大量零散的 token 消息
     }
 
-    // 用于缓存工具调用，等待 AI 响应完成后再执行
-    private ToolCall pendingToolCall = null;
+    // 用于缓存工具调用，等待 AI 响应完成后再执行（原生路径一轮可能有多个）
+    private final List<ToolCall> pendingToolCalls = new ArrayList<>();
 
     private void handleToolCall(ToolCall toolCall) {
-        // 🔥 不再显示工具调用通知（已在流式输出中显示）
-        // context.getUi().displayToolCall(toolCall);
-
-        // 🔥 缓存工具调用，不立即执行（等待 AI 流式输出完成）
-        this.pendingToolCall = toolCall;
+        // 🔥 缓存工具调用，不立即执行（等待 AI 流式输出完成）；原生路径一轮可累积多个
+        this.pendingToolCalls.add(toolCall);
     }
 
     /**
      * 🔥 在 AI 响应完成后执行待处理的工具调用
      */
     public void executePendingToolCall() {
-        if (pendingToolCall == null) {
+        if (pendingToolCalls.isEmpty()) {
             return;
         }
+
+        ToolCall pendingToolCall = pendingToolCalls.get(0);
 
         try {
             // 非流式触发的工具调用，需要显示完整的确认框
@@ -203,7 +214,130 @@ public class AgentLoop {
             }
         } finally {
             // 清空待处理的工具调用
-            pendingToolCall = null;
+            pendingToolCalls.clear();
+        }
+    }
+
+    /**
+     * 🔥 原生 function calling 的多轮 agentic 循环：
+     * 模型响应 → 执行本轮所有工具（仅写/执行类确认）→ 结果按 id 配对写回 → 无新输入再问模型，
+     * 直到模型不再请求工具、或用户取消、或达到 maxToolIterations。
+     */
+    private void runNativeToolLoop() {
+        AppConfig.AIConfig ai = context.getAppConfig().getAi();
+        int maxIter = ai != null ? ai.getMaxToolIterations() : 10;
+        boolean auto = ai == null || ai.isAutoProcessToolResults();
+        int iter = 0;
+
+        while (true) {
+            pendingToolCalls.clear();
+            // 一轮模型响应（无新用户输入；用户消息与历史已在 history 中）
+            context.getAiService().streamingChat(null, history, modelName);
+
+            if (pendingToolCalls.isEmpty()) {
+                break; // 模型只产出文本 → 自然终止
+            }
+
+            List<ToolCall> batch = new ArrayList<>(pendingToolCalls);
+            boolean stop = false;
+
+            for (ToolCall call : batch) {
+                if (stop) {
+                    // 用户已取消：为剩余工具补 declined 结果，保持 call/result 配对
+                    history.add(ChatMessage.toolResult(call.getProviderCallId(), call.getToolName(),
+                            "用户已取消后续工具执行。"));
+                    continue;
+                }
+
+                // 仅写/执行类需要确认（除非处于自动批准模式）
+                if (requiresConfirmation(call) && !confirmation.isAutoApproveMode()) {
+                    ToolExecution exec = new ToolExecution(
+                            call.getToolName(),
+                            call.getDescription() != null ? call.getDescription() : "执行工具操作",
+                            call.getParameters(),
+                            true);
+                    ToolExecutionConfirmation.ActionType action = confirmation.askConfirmationWithOptions(exec);
+                    if (action == ToolExecutionConfirmation.ActionType.DISCARD) {
+                        context.getUi().displayWarning("⏭️  已取消：" + describeTool(call));
+                        history.add(ChatMessage.toolResult(call.getProviderCallId(), call.getToolName(),
+                                "用户拒绝执行该工具。"));
+                        stop = true;
+                        continue;
+                    }
+                }
+
+                // 执行并把结果按 id 配对写回 history
+                ToolResult result = toolDispatcher.dispatch(call);
+                displayNativeToolResult(call, result);
+                String resultText = result.isSuccess()
+                        ? (result.getOutput() == null || result.getOutput().isBlank()
+                            ? "执行成功（无输出）。" : result.getOutput())
+                        : ("执行失败: " + result.getError());
+                history.add(ChatMessage.toolResult(call.getProviderCallId(), call.getToolName(), resultText));
+            }
+
+            if (stop) {
+                break;      // 用户 DISCARD → 停止循环，交回用户
+            }
+            if (!auto) {
+                break;      // 不自动回喂结果 → 执行一批后停止
+            }
+            if (++iter >= maxIter) {
+                history.add(new ChatMessage("system",
+                        "已达到最大工具调用轮次(" + maxIter + ")，停止自动执行。"));
+                context.getUi().displayWarning("⚠️  已达最大工具轮次(" + maxIter + ")，停止自动执行。");
+                break;
+            }
+        }
+    }
+
+    /** 仅写/执行类工具需要确认；只读操作（file_manager read/list/info、grep_search）静默放行。 */
+    private boolean requiresConfirmation(ToolCall call) {
+        String name = call.getToolName();
+        if (name == null) {
+            return true;
+        }
+        switch (name) {
+            case "file_manager": {
+                Object cmd = call.getParameters() == null ? null : call.getParameters().get("command");
+                String c = cmd == null ? "" : cmd.toString().toLowerCase();
+                return c.equals("write") || c.equals("create") || c.equals("delete");
+            }
+            case "command_executor":
+            case "code_executor":
+                return true;
+            case "grep_search":
+                return false;
+            default:
+                return true; // MCP / 未知工具默认确认
+        }
+    }
+
+    private String describeTool(ToolCall call) {
+        String cmd = extractCommand(call);
+        if (cmd != null) {
+            return call.getToolName() + "(" + cmd + ")";
+        }
+        String fn = extractFileName(call);
+        if (fn != null) {
+            return call.getToolName() + "(" + fn + ")";
+        }
+        return call.getToolName();
+    }
+
+    /** 显示原生工具执行结果（沿用简洁风格）。 */
+    private void displayNativeToolResult(ToolCall call, ToolResult result) {
+        if (result.isSuccess()) {
+            context.getUi().displaySuccess("✅ 完成: " + describeTool(call));
+            String output = result.getOutput();
+            if (output != null && !output.trim().isEmpty()) {
+                for (String line : output.trim().split("\n")) {
+                    context.getUi().getTerminal().writer().println("  " + line);
+                }
+                context.getUi().getTerminal().writer().flush();
+            }
+        } else {
+            context.getUi().displayError("❌ 失败: " + result.getError());
         }
     }
 
@@ -508,15 +642,12 @@ public class AgentLoop {
      */
     private void executeCommand(String command) {
         try {
-            BaseTool commandTool = context.getToolRegistry().getTool("command_executor");
-            if (commandTool == null) {
-                context.getUi().displayError("  ⎿ 错误：找不到 command_executor 工具");
-                return;
-            }
+            // 🔥 经由唯一收口执行，保证自动编译/运行也过沙箱检查点
+            java.util.Map<String, Object> params = new java.util.HashMap<>();
+            params.put("command", command);
+            ToolCall commandCall = new ToolCall("command_executor", params, null, false, 0);
 
-            // 🔥 CommandExecutorTool.execute() 直接接收命令字符串，不需要 JSON 包装
-            // 直接传入原始命令即可
-            ToolResult result = commandTool.execute(command);
+            ToolResult result = toolDispatcher.dispatch(commandCall);
 
             if (result.isSuccess()) {
                 // 显示命令输出
@@ -551,23 +682,8 @@ public class AgentLoop {
             // 🔥 简化输出：只显示简短的执行提示
             // context.getUi().displayInfo("⚙️  正在执行: " + toolCall.getToolName() + "...");
 
-            // 从工具注册表获取工具
-            BaseTool tool = context.getToolRegistry().getTool(toolCall.getToolName());
-
-            if (tool == null) {
-                context.getUi().displayError("❌ 工具不存在: " + toolCall.getToolName());
-
-                // 🔥 将错误添加到历史，让 AI 知道工具执行失败
-                ChatMessage errorMessage = new ChatMessage("system",
-                    "Tool execution failed: Tool '" + toolCall.getToolName() + "' not found.");
-                history.add(errorMessage);
-
-                return false;
-            }
-
-            // 执行工具
-            String arguments = convertParametersToJson(toolCall.getParameters());
-            ToolResult result = tool.execute(arguments);
+            // 🔥 经由唯一收口执行（含 null 检查与未来的沙箱检查）
+            ToolResult result = toolDispatcher.dispatch(toolCall);
 
             // 🔥 显示执行结果
             if (result.isSuccess()) {

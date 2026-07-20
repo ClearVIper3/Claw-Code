@@ -3,6 +3,7 @@ package com.thoughtcoding.service;
 import com.thoughtcoding.config.AppConfig;
 import com.thoughtcoding.model.ChatMessage;
 import com.thoughtcoding.model.ToolCall;
+import com.thoughtcoding.model.ToolCallRef;
 import com.thoughtcoding.tools.ToolRegistry;
 import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.model.chat.response.ChatResponse;
@@ -21,6 +22,7 @@ import java.util.stream.Collectors;
 public class LangChainService implements AIService {
     private final AppConfig appConfig;
     private final ContextManager contextManager;
+    private final ToolRegistry toolRegistry;   // 🔥 存下工具注册表，用于原生 function calling 生成 ToolSpecification
     private Consumer<ChatMessage> messageHandler;
     private Consumer<ToolCall> toolCallHandler;
     private StreamingChatModel streamingChatModel;
@@ -37,6 +39,7 @@ public class LangChainService implements AIService {
 
     public LangChainService(AppConfig appConfig, ToolRegistry toolRegistry, ContextManager contextManager) {
         this.appConfig = appConfig;
+        this.toolRegistry = toolRegistry;
         this.contextManager = contextManager;
         initializeChatModel();
     }
@@ -92,6 +95,11 @@ public class LangChainService implements AIService {
             // 移除提示信息，保持输出简洁
             // System.out.println("🚀 Sending request to DeepSeek API...");
 
+            boolean useNative = appConfig.getAi() != null && appConfig.getAi().isNativeToolCalling();
+            if (useNative) {
+                // 🔥 原生 function calling 路径
+                streamingChatNative(messages, history, fullResponse, completionFuture);
+            } else {
             streamingChatModel.chat(messages, new StreamingChatResponseHandler() {
                 private final StringBuilder codeBuffer = new StringBuilder();
                 private boolean confirmationDisplayed = false;
@@ -286,6 +294,7 @@ public class LangChainService implements AIService {
                     }
                 }
             });
+            }
 
             // 🔥 等待流式响应完成（最多等待 5 分钟）
             try {
@@ -312,6 +321,108 @@ public class LangChainService implements AIService {
         return history;
     }
 
+    /**
+     * 🔥 原生 function calling 路径：带 ToolSpecification 发起请求，在 onCompleteResponse 读取结构化工具请求。
+     */
+    private void streamingChatNative(
+            List<dev.langchain4j.data.message.ChatMessage> messages,
+            List<ChatMessage> history,
+            StringBuilder fullResponse,
+            CompletableFuture<Void> completionFuture) {
+
+        dev.langchain4j.model.chat.request.ChatRequest.Builder reqBuilder =
+                dev.langchain4j.model.chat.request.ChatRequest.builder().messages(messages);
+        if (toolRegistry != null) {
+            List<dev.langchain4j.agent.tool.ToolSpecification> specs = toolRegistry.getToolSpecifications();
+            if (specs != null && !specs.isEmpty()) {
+                reqBuilder.toolSpecifications(specs);
+            }
+        }
+        dev.langchain4j.model.chat.request.ChatRequest request = reqBuilder.build();
+
+        streamingChatModel.chat(request, new StreamingChatResponseHandler() {
+            @Override
+            public void onPartialResponse(String token) {
+                if (shouldStop) {
+                    return;
+                }
+                fullResponse.append(token);
+                if (messageHandler != null) {
+                    messageHandler.accept(new ChatMessage("assistant", token));
+                }
+            }
+
+            @Override
+            public void onCompleteResponse(dev.langchain4j.model.chat.response.ChatResponse chatResponse) {
+                try {
+                    dev.langchain4j.data.message.AiMessage ai = chatResponse.aiMessage();
+                    String text = ai.text();
+                    List<dev.langchain4j.agent.tool.ToolExecutionRequest> requests = ai.toolExecutionRequests();
+
+                    if (requests != null && !requests.isEmpty()) {
+                        // 构建携带工具调用的 assistant 消息加入 history（供下一轮重建 AiMessage.toolExecutionRequests）
+                        List<ToolCallRef> refs = new ArrayList<>();
+                        for (dev.langchain4j.agent.tool.ToolExecutionRequest req : requests) {
+                            refs.add(new ToolCallRef(req.id(), req.name(), req.arguments()));
+                        }
+                        history.add(ChatMessage.assistantWithToolCalls(text, refs));
+
+                        // 逐个工具请求发出 ToolCall（带 providerCallId），由 AgentLoop 累积并执行
+                        if (toolCallHandler != null) {
+                            for (dev.langchain4j.agent.tool.ToolExecutionRequest req : requests) {
+                                java.util.Map<String, Object> params = parseArguments(req.arguments());
+                                ToolCall call = new ToolCall(req.name(), params, null, false, 0, false, req.id());
+                                toolCallHandler.accept(call);
+                            }
+                        }
+                    } else {
+                        // 纯文本回复
+                        if (text != null && !text.isBlank()) {
+                            history.add(new ChatMessage("assistant", text));
+                        }
+                    }
+                    System.out.println();
+                } finally {
+                    isGenerating = false;
+                    shouldStop = false;
+                    completionFuture.complete(null);
+                }
+            }
+
+            @Override
+            public void onError(Throwable error) {
+                try {
+                    System.err.println("❌ API error: " + error.getMessage());
+                    ChatMessage errorMessage = new ChatMessage("assistant",
+                            "抱歉，我在处理您的请求时遇到了问题： " + error.getMessage());
+                    if (messageHandler != null) {
+                        messageHandler.accept(errorMessage);
+                    }
+                    history.add(errorMessage);
+                } finally {
+                    isGenerating = false;
+                    shouldStop = false;
+                    completionFuture.completeExceptionally(error);
+                }
+            }
+        });
+    }
+
+    /** 把工具调用参数 JSON 解析为 Map；失败则退化为 {"input": 原始串}。 */
+    private java.util.Map<String, Object> parseArguments(String argumentsJson) {
+        java.util.Map<String, Object> params = new java.util.HashMap<>();
+        if (argumentsJson == null || argumentsJson.isBlank()) {
+            return params;
+        }
+        try {
+            return new com.fasterxml.jackson.databind.ObjectMapper()
+                    .readValue(argumentsJson, java.util.Map.class);
+        } catch (Exception e) {
+            params.put("input", argumentsJson);
+            return params;
+        }
+    }
+
     private List<dev.langchain4j.data.message.ChatMessage> prepareMessages(
             String input, List<ChatMessage> history) {
         List<dev.langchain4j.data.message.ChatMessage> messages = new ArrayList<>();
@@ -332,24 +443,50 @@ public class LangChainService implements AIService {
             messages.addAll(convertToLangChainHistory(managedHistory));
         }
 
-        messages.add(dev.langchain4j.data.message.UserMessage.from(input));
-
+        // 🔥 纯从 history 渲染：用户消息已由 AgentLoop 加入 history，不再重复 append，
+        //    也让 agentic 循环可以用 input=null 复用本方法。
         return messages;
     }
 
     private List<dev.langchain4j.data.message.ChatMessage> convertToLangChainHistory(
             List<ChatMessage> history) {
-        return history.stream()
-                .map(msg -> {
-                    if ("user".equals(msg.getRole())) {
-                        return dev.langchain4j.data.message.UserMessage.from(msg.getContent());
-                    } else if ("assistant".equals(msg.getRole())) {
-                        return dev.langchain4j.data.message.AiMessage.from(msg.getContent());
-                    } else {
-                        return dev.langchain4j.data.message.SystemMessage.from(msg.getContent());
+        List<dev.langchain4j.data.message.ChatMessage> out = new ArrayList<>();
+        for (ChatMessage msg : history) {
+            String role = msg.getRole();
+            String content = msg.getContent();
+            if ("user".equals(role)) {
+                out.add(dev.langchain4j.data.message.UserMessage.from(content));
+            } else if ("tool".equals(role)) {
+                // 🔥 原生工具结果，按 id 与 assistant 工具调用配对
+                out.add(dev.langchain4j.data.message.ToolExecutionResultMessage.from(
+                        msg.getToolCallId(),
+                        msg.getToolName(),
+                        content == null ? "" : content));
+            } else if ("assistant".equals(role)) {
+                if (msg.hasToolCalls()) {
+                    // 🔥 携带工具调用的 assistant 消息 → AiMessage(text, requests)
+                    List<dev.langchain4j.agent.tool.ToolExecutionRequest> reqs = new ArrayList<>();
+                    for (ToolCallRef ref : msg.getToolCalls()) {
+                        reqs.add(dev.langchain4j.agent.tool.ToolExecutionRequest.builder()
+                                .id(ref.getId())
+                                .name(ref.getName())
+                                .arguments(ref.getArguments() == null ? "{}" : ref.getArguments())
+                                .build());
                     }
-                })
-                .collect(Collectors.toList());
+                    if (content == null || content.isBlank()) {
+                        out.add(dev.langchain4j.data.message.AiMessage.from(reqs));
+                    } else {
+                        out.add(dev.langchain4j.data.message.AiMessage.from(content, reqs));
+                    }
+                } else {
+                    out.add(dev.langchain4j.data.message.AiMessage.from(content));
+                }
+            } else {
+                // system 及其它角色
+                out.add(dev.langchain4j.data.message.SystemMessage.from(content));
+            }
+        }
+        return out;
     }
 
     @Override
