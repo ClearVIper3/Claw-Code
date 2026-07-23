@@ -150,32 +150,9 @@ public class MCPService {
         }
     }
 
-
-
-
-
-    private List<BaseTool> convertTools(List<MCPTool> mcpTools, MCPClient client) {
-        List<BaseTool> result = new ArrayList<>();
-        for (MCPTool mcpTool : mcpTools) {
-            result.add(new MCPToolAdapter(mcpTool, client));
-        }
-        return result;
-    }
-
     public void disconnectServer(String serverName) {
         MCPClient client = connectedServers.remove(serverName);
         if (client != null) {
-            // 移除相关工具
-            mcpTools.entrySet().removeIf(entry -> {
-                boolean shouldRemove = entry.getKey().startsWith("mcp:" + serverName + "/");
-                if (shouldRemove) {
-                    // 根据你的 ToolRegistry 实现，可能需要不同的取消注册方法
-                    // 如果没有 unregister 方法，可能需要其他方式处理
-                    log.debug("移除MCP工具: {}", entry.getKey());
-                }
-                return shouldRemove;
-            });
-
             client.disconnect();
             log.debug("已断开MCP服务器: {}", serverName);
         }
@@ -185,22 +162,8 @@ public class MCPService {
         return new ArrayList<>(connectedServers.keySet());
     }
 
-    public List<BaseTool> getServerTools(String serverName) {
-        List<BaseTool> tools = new ArrayList<>();
-        mcpTools.forEach((name, tool) -> {
-            if (name.startsWith("mcp:" + serverName + "/")) {
-                tools.add(tool);
-            }
-        });
-        return tools;
-    }
-
     public Map<String, BaseTool> getMCPTools() {
         return new HashMap<>(mcpTools);
-    }
-
-    public List<String> getAvailableToolNames() {
-        return new ArrayList<>(mcpTools.keySet());
     }
 
     public void shutdown() {
