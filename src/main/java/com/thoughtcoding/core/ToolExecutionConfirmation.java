@@ -36,8 +36,6 @@ public class ToolExecutionConfirmation {
             return ActionType.CREATE_ONLY;
         }
 
-        displayToolCallDetails(execution);
-
         // 显示智能选项
         displaySmartOptions(execution);
 
@@ -308,18 +306,13 @@ public class ToolExecutionConfirmation {
         return action == ActionType.CREATE_ONLY || action == ActionType.CREATE_AND_RUN;
     }
 
-    private void displayToolCallDetails(ToolExecution execution) {
-        // 🔥 简化显示：不显示装饰性分隔线，保持界面简洁
-        // 代码内容已经在 AI 响应中显示过了，这里不重复显示
-    }
-
     /**
      * 获取选项 1 的描述
      */
     private String getOption1Description(String toolName) {
         return switch (toolName) {
             case "write_file" -> "创建文件";
-            case "bash", "command_executor" -> "执行命令";
+            case "command_executor" -> "执行命令";
             case "code_executor" -> "执行代码";
             case "file_manager" -> "执行文件操作";
             case "edit_file" -> "应用修改";
@@ -335,7 +328,7 @@ public class ToolExecutionConfirmation {
     private String getOption2Description(String toolName) {
         return switch (toolName) {
             case "write_file" -> "创建并运行";
-            case "bash", "command_executor" -> "查看详情";
+            case "command_executor" -> "查看详情";
             case "code_executor" -> "执行代码";
             case "file_manager" -> "查看详情";
             case "edit_file" -> "应用并查看";
@@ -343,56 +336,6 @@ public class ToolExecutionConfirmation {
             case "list_directory" -> "列出详细信息";
             default -> "执行并查看详情";
         };
-    }
-
-    /**
-     * 根据工具名称返回友好的操作描述
-     */
-    private String getActionDescription(String toolName) {
-        return switch (toolName) {
-            case "write_file" -> "创建文件";
-            case "read_file" -> "读取文件";
-            case "list_directory" -> "列出目录";
-            case "edit_file" -> "编辑文件";
-            default -> "执行操作: " + toolName;
-        };
-    }
-
-    /**
-     * 将参数键名翻译为中文
-     */
-    private String translateParameterKey(String key) {
-        return switch (key) {
-            case "path" -> "📂 文件路径";
-            case "content" -> "📄 文件内容";
-            case "directory" -> "📁 目录";
-            default -> key;
-        };
-    }
-
-    private String formatValue(Object value) {
-        if (value == null) {
-            return "(null)";
-        }
-
-        if (value instanceof String) {
-            String str = (String) value;
-
-            if (str.contains("\n")) {
-                // 🔥 显示完整内容，不再省略
-                String[] lines = str.split("\n");
-                StringBuilder full = new StringBuilder("\n");
-                for (String line : lines) {
-                    full.append("      ").append(line).append("\n");
-                }
-                return full.toString();
-            }
-
-            // 单行文本也不截断，显示完整内容
-            return str;
-        }
-
-        return value.toString();
     }
 
     public void setAutoApproveMode(boolean enabled) {
