@@ -28,27 +28,19 @@ public class GrepSearchTool extends BaseTool {
         long startTime = System.currentTimeMillis();
 
         try {
-            // 解析 pattern / path：优先 JSON（原生工具参数），否则回退到空格分隔
-            String rawPattern;
-            String rawPath;
-            if (input != null && input.trim().startsWith("{")) {
-                com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
-                java.util.Map<String, Object> params = mapper.readValue(input, java.util.Map.class);
-                Object pat = params.get("pattern");
-                Object pth = params.get("path");
-                if (pat == null || pth == null) {
-                    return error("JSON 格式错误：需要 'pattern' 和 'path' 字段", System.currentTimeMillis() - startTime);
-                }
-                rawPattern = pat.toString();
-                rawPath = pth.toString();
-            } else {
-                String[] parts = input.split(" ", 2);
-                if (parts.length < 2) {
-                    return error("Invalid format. Use: <pattern> <path>", System.currentTimeMillis() - startTime);
-                }
-                rawPattern = parts[0];
-                rawPath = parts[1];
+            // 原生 function calling：参数固定为 JSON（见 ToolDispatcher#toJson）
+            if (input == null || !input.trim().startsWith("{")) {
+                return error("grep_search 需要包含 'pattern' 与 'path' 的 JSON 参数", System.currentTimeMillis() - startTime);
             }
+            com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+            java.util.Map<String, Object> params = mapper.readValue(input, java.util.Map.class);
+            Object pat = params.get("pattern");
+            Object pth = params.get("path");
+            if (pat == null || pth == null) {
+                return error("JSON 格式错误：需要 'pattern' 和 'path' 字段", System.currentTimeMillis() - startTime);
+            }
+            String rawPattern = pat.toString();
+            String rawPath = pth.toString();
 
             final String pattern = rawPattern;
             final String searchPath = rawPath;

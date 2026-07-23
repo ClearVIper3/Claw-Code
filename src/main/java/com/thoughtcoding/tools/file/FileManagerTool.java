@@ -31,30 +31,19 @@ public class FileManagerTool extends BaseTool {
         long startTime = System.currentTimeMillis();
 
         try {
-            String action;
-            String path;
-            String content = null;
+            // 原生 function calling：参数固定为 JSON（见 ToolDispatcher#toJson）
+            com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+            java.util.Map<String, Object> params = mapper.readValue(input, java.util.Map.class);
 
-            // 🔥 支持 JSON 格式输入
-            if (input.trim().startsWith("{")) {
-                com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
-                java.util.Map<String, Object> params = mapper.readValue(input, java.util.Map.class);
+            String action = (String) params.get("command");
+            if (action == null) action = (String) params.get("action");
 
-                action = (String) params.get("command");
-                if (action == null) action = (String) params.get("action");
+            String path = (String) params.get("path");
+            String content = (String) params.get("content");
 
-                path = (String) params.get("path");
-                content = (String) params.get("content");
-
-                if (action == null || path == null) {
-                    return error("JSON格式错误: 需要 'command'/'action' 和 'path' 字段",
-                            System.currentTimeMillis() - startTime);
-                }
-            } else {
-                // 简单字符串解析（向后兼容）
-                String[] parts = input.split(" ", 2);
-                action = parts[0].toLowerCase();
-                path = parts.length > 1 ? parts[1] : "";
+            if (action == null || path == null) {
+                return error("JSON格式错误: 需要 'command'/'action' 和 'path' 字段",
+                        System.currentTimeMillis() - startTime);
             }
 
             action = action.toLowerCase();
@@ -64,10 +53,9 @@ public class FileManagerTool extends BaseTool {
                     return readFile(path, startTime);
                 case "write":
                     if (content == null) {
-                        return writeFile(input, startTime); // 使用旧格式
-                    } else {
-                        return writeFileWithContent(path, content, startTime);
+                        return error("write 操作需要 content 字段", System.currentTimeMillis() - startTime);
                     }
+                    return writeFileWithContent(path, content, startTime);
                 case "list":
                     return listFiles(path, startTime);
                 case "create":
@@ -121,32 +109,6 @@ public class FileManagerTool extends BaseTool {
 
         } catch (IOException e) {
             return error("Failed to read file: " + e.getMessage(), System.currentTimeMillis() - startTime);
-        }
-    }
-
-    private ToolResult writeFile(String input, long startTime) {
-        try {
-            // 输入格式: "path content" 或 JSON格式
-            String[] parts = input.split(" ", 2);
-            if (parts.length < 2) {
-                return error("Invalid write format. Use: write <path> <content>", System.currentTimeMillis() - startTime);
-            }
-
-            String filePath = parts[0];
-            String content = parts[1];
-
-            String expandedPath = expandUserHome(filePath);
-            Path path = Paths.get(expandedPath).toAbsolutePath();
-
-            // 确保父目录存在
-            Files.createDirectories(path.getParent());
-
-            Files.writeString(path, content, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
-
-            return success("File written successfully: " + path, System.currentTimeMillis() - startTime);
-
-        } catch (IOException e) {
-            return error("Failed to write file: " + e.getMessage(), System.currentTimeMillis() - startTime);
         }
     }
 
