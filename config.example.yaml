@@ -18,11 +18,13 @@ ai:
   maxToolIterations: 10         # 单次用户输入内的最大工具轮次上限
 
 tools:
-  fileManager:
+  bash:
     enabled: true
-  commandExec:
+  read:
     enabled: true
-  codeExecutor:
+  write:
     enabled: true
-  search:
+  edit:
+    enabled: true
+  glob:
     enabled: true

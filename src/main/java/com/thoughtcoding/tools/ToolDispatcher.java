@@ -37,7 +37,7 @@ public class ToolDispatcher {
 
         // 【沙箱插桩点】——下一任务在此插入 workspace 边界检查：
         //   WriteGuard.check(call.getToolName(), call.getParameters())
-        // 对 file_manager 的 write/create/delete 路径、command_executor 的 command 做越界判定，
+        // 对 write/edit 的 path、bash 的 command 做越界判定，
         // 越界时直接 return ToolResult.error(...) 不进入 tool.execute。
 
         return tool.execute(argsJson);

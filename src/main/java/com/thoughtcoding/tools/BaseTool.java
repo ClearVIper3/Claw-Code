@@ -48,6 +48,20 @@ public abstract class BaseTool {
         return ToolResult.error(error, executionTime);
     }
 
+    /** 展开路径中的 ~ 为用户主目录（~ 或 ~/xxx）。 */
+    protected String expandUserHome(String path) {
+        if (path == null || path.isEmpty()) {
+            return path;
+        }
+        if (path.equals("~")) {
+            return System.getProperty("user.home");
+        }
+        if (path.startsWith("~/")) {
+            return System.getProperty("user.home") + path.substring(1);
+        }
+        return path;
+    }
+
     @Override
     public String toString() {
         return String.format("Tool{name=%s, description=%s}", name, description);

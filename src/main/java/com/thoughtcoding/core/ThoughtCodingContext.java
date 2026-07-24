@@ -11,10 +11,11 @@ import com.thoughtcoding.service.LangChainService;
 import com.thoughtcoding.service.PerformanceMonitor;
 import com.thoughtcoding.service.SessionService;
 import com.thoughtcoding.tools.*;
-import com.thoughtcoding.tools.exec.CodeExecutorTool;
-import com.thoughtcoding.tools.exec.CommandExecutorTool;
-import com.thoughtcoding.tools.file.FileManagerTool;
-import com.thoughtcoding.tools.search.GrepSearchTool;
+import com.thoughtcoding.tools.exec.BashTool;
+import com.thoughtcoding.tools.file.EditTool;
+import com.thoughtcoding.tools.file.ReadTool;
+import com.thoughtcoding.tools.file.WriteTool;
+import com.thoughtcoding.tools.search.GlobTool;
 import com.thoughtcoding.ui.ThoughtCodingUI;
 
 import java.util.ArrayList;
@@ -77,20 +78,24 @@ public class ThoughtCodingContext {
         MCPToolManager mcpToolManager = new MCPToolManager(mcpService, mcpConfig);
 
         // 注册内置工具 - 传递整个 AppConfig 对象
-        if (appConfig.getTools().getFileManager().isEnabled()) {
-            toolRegistry.register(new FileManagerTool(appConfig));
+        if (appConfig.getTools().getBash().isEnabled()) {
+            toolRegistry.register(new BashTool(appConfig));
         }
 
-        if (appConfig.getTools().getCommandExec().isEnabled()) {
-            toolRegistry.register(new CommandExecutorTool(appConfig));
+        if (appConfig.getTools().getRead().isEnabled()) {
+            toolRegistry.register(new ReadTool(appConfig));
         }
 
-        if (appConfig.getTools().getCodeExecutor().isEnabled()) {
-            toolRegistry.register(new CodeExecutorTool(appConfig));
+        if (appConfig.getTools().getWrite().isEnabled()) {
+            toolRegistry.register(new WriteTool(appConfig));
         }
 
-        if (appConfig.getTools().getSearch().isEnabled()) {
-            toolRegistry.register(new GrepSearchTool(appConfig));
+        if (appConfig.getTools().getEdit().isEnabled()) {
+            toolRegistry.register(new EditTool(appConfig));
+        }
+
+        if (appConfig.getTools().getGlob().isEnabled()) {
+            toolRegistry.register(new GlobTool(appConfig));
         }
 
         // 🔥 初始化 MCP 服务（如果启用）

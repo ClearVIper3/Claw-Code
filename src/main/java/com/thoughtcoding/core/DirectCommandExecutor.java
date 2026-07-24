@@ -1,6 +1,6 @@
 package com.thoughtcoding.core;
 
-import com.thoughtcoding.tools.exec.CommandExecutorTool;
+import com.thoughtcoding.tools.exec.BashTool;
 import com.thoughtcoding.ui.ThoughtCodingUI;
 import com.thoughtcoding.model.ToolResult;
 
@@ -15,7 +15,7 @@ public class DirectCommandExecutor {
 
     private final ThoughtCodingContext context;
     private final ThoughtCodingUI ui;
-    private final CommandExecutorTool commandExecutor;
+    private final BashTool bash;
     private final ProjectContext projectContext;
 
     // 直接执行的模式匹配
@@ -201,7 +201,7 @@ public class DirectCommandExecutor {
     public DirectCommandExecutor(ThoughtCodingContext context) {
         this.context = context;
         this.ui = context.getUi();
-        this.commandExecutor = new CommandExecutorTool(context.getAppConfig());
+        this.bash = new BashTool(context.getAppConfig());
         this.projectContext = new ProjectContext(System.getProperty("user.dir"));
     }
 
@@ -435,7 +435,7 @@ public class DirectCommandExecutor {
             String cmd = commands.get(i);
             ui.displayInfo("📍 执行步骤 " + (i + 1) + "/" + commands.size() + ": " + cmd);
 
-            ToolResult result = commandExecutor.execute(cmd);
+            ToolResult result = runBash(cmd);
 
             if (result.isSuccess()) {
                 ui.displaySuccess("✅ 步骤 " + (i + 1) + " 成功");
@@ -453,12 +453,23 @@ public class DirectCommandExecutor {
         return true;
     }
 
+    /** 用 bash 工具执行一条命令（把原始命令包成 JSON 入参）。 */
+    private ToolResult runBash(String command) {
+        try {
+            String json = new com.fasterxml.jackson.databind.ObjectMapper()
+                    .writeValueAsString(java.util.Collections.singletonMap("command", command));
+            return bash.execute(json);
+        } catch (Exception e) {
+            return ToolResult.error("命令封装失败: " + e.getMessage(), 0);
+        }
+    }
+
     /**
      * 执行单个命令
      */
     private void executeCommand(String command) {
         try {
-            ToolResult result = commandExecutor.execute(command);
+            ToolResult result = runBash(command);
 
             if (result.isSuccess()) {
                 // 只显示命令输出结果

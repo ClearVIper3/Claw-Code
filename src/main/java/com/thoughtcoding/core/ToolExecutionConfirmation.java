@@ -121,35 +121,18 @@ public class ToolExecutionConfirmation {
         String toolName = execution.toolName();
 
         // 🔥 根据工具类型生成不同的选项
-        if (toolName.equals("write_file")) {
-            // 创建文件的选项
+        if (toolName.equals("write") || toolName.equals("write_file")) {
+            // 创建/写入文件的选项
             displayCreateFileOptions(execution);
-        } else if (toolName.equals("file_manager")) {
-            // 原生 file_manager：按 command 细分
-            String cmd = extractFileManagerCommand(execution);
-            if ("write".equals(cmd) || "create".equals(cmd)) {
-                displayCreateFileOptions(execution);
-            } else if ("delete".equals(cmd)) {
-                ui.getTerminal().writer().println("⚠️  这将删除文件/目录！");
-                ui.getTerminal().writer().println("❯ 1. 是的，确认删除");
-                ui.getTerminal().writer().println("  2. 我再想想");
-                ui.getTerminal().writer().println("  3. 取消");
-            } else if ("read".equals(cmd)) {
-                displayReadFileOptions(execution);
-            } else if ("list".equals(cmd)) {
-                displayListDirectoryOptions(execution);
-            } else {
-                displayDefaultOptions(execution);
-            }
-        } else if (toolName.equals("bash") || toolName.equals("command_executor") || toolName.equals("code_executor")) {
-            // 执行命令/代码的选项
-            displayExecuteCommandOptions(execution);
-        } else if (toolName.equals("edit_file")) {
+        } else if (toolName.equals("edit") || toolName.equals("edit_file")) {
             // 编辑文件的选项
             displayEditFileOptions(execution);
-        } else if (toolName.equals("read_file")) {
+        } else if (toolName.equals("read") || toolName.equals("read_file")) {
             // 读取文件的选项
             displayReadFileOptions(execution);
+        } else if (toolName.equals("bash")) {
+            // 执行命令的选项
+            displayExecuteCommandOptions(execution);
         } else if (toolName.equals("list_directory")) {
             // 列出目录的选项
             displayListDirectoryOptions(execution);
@@ -247,15 +230,6 @@ public class ToolExecutionConfirmation {
         ui.getTerminal().writer().println("  3. 取消");
     }
 
-    /** 提取 file_manager 的 command 参数（read/write/list/create/delete/info） */
-    private String extractFileManagerCommand(ToolExecution execution) {
-        if (execution.parameters() == null) {
-            return null;
-        }
-        Object c = execution.parameters().get("command");
-        return c == null ? null : c.toString().toLowerCase();
-    }
-
     /**
      * 从执行参数中提取命令
      */
@@ -311,12 +285,10 @@ public class ToolExecutionConfirmation {
      */
     private String getOption1Description(String toolName) {
         return switch (toolName) {
-            case "write_file" -> "创建文件";
-            case "command_executor" -> "执行命令";
-            case "code_executor" -> "执行代码";
-            case "file_manager" -> "执行文件操作";
-            case "edit_file" -> "应用修改";
-            case "read_file" -> "读取文件";
+            case "write", "write_file" -> "创建文件";
+            case "edit", "edit_file" -> "应用修改";
+            case "read", "read_file" -> "读取文件";
+            case "bash" -> "执行命令";
             case "list_directory" -> "列出目录";
             default -> "执行操作";
         };
@@ -327,12 +299,10 @@ public class ToolExecutionConfirmation {
      */
     private String getOption2Description(String toolName) {
         return switch (toolName) {
-            case "write_file" -> "创建并运行";
-            case "command_executor" -> "查看详情";
-            case "code_executor" -> "执行代码";
-            case "file_manager" -> "查看详情";
-            case "edit_file" -> "应用并查看";
-            case "read_file" -> "读取并分页查看";
+            case "write", "write_file" -> "创建并查看";
+            case "edit", "edit_file" -> "应用并查看";
+            case "read", "read_file" -> "读取并分页查看";
+            case "bash" -> "查看详情";
             case "list_directory" -> "列出详细信息";
             default -> "执行并查看详情";
         };

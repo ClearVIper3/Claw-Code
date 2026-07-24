@@ -45,33 +45,42 @@ public final class ToolSpecificationFactory {
 
     private static JsonObjectSchema builtInSchema(String name) {
         switch (name) {
-            case "file_manager":
+            case "bash":
                 return JsonObjectSchema.builder()
-                        .addEnumProperty("command", List.of("read", "write", "list", "create", "delete", "info"),
-                                "文件操作类型")
-                        .addStringProperty("path", "目标文件或目录路径（相对项目根或绝对路径）")
-                        .addStringProperty("content", "write 操作要写入的文件内容；其它操作可省略")
-                        .required("command", "path")
-                        .additionalProperties(false)
-                        .build();
-            case "command_executor":
-                return JsonObjectSchema.builder()
-                        .addStringProperty("command", "要执行的完整 shell 命令")
+                        .addStringProperty("command", "要执行的 shell 命令")
+                        .addIntegerProperty("timeout", "超时秒数（可选）")
                         .required("command")
                         .additionalProperties(false)
                         .build();
-            case "code_executor":
+            case "read":
                 return JsonObjectSchema.builder()
-                        .addEnumProperty("language", List.of("java", "python", "javascript"), "代码语言")
-                        .addStringProperty("code", "要执行的源代码片段")
-                        .required("language", "code")
+                        .addStringProperty("path", "要读取的文件路径")
+                        .addIntegerProperty("offset", "起始行号（1 起，可选）")
+                        .addIntegerProperty("limit", "读取行数（可选）")
+                        .required("path")
                         .additionalProperties(false)
                         .build();
-            case "grep_search":
+            case "write":
                 return JsonObjectSchema.builder()
-                        .addStringProperty("pattern", "要搜索的正则表达式或文本")
-                        .addStringProperty("path", "搜索的起始目录或文件")
-                        .required("pattern", "path")
+                        .addStringProperty("path", "要写入的文件路径")
+                        .addStringProperty("content", "文件内容（覆盖写）")
+                        .required("path", "content")
+                        .additionalProperties(false)
+                        .build();
+            case "edit":
+                return JsonObjectSchema.builder()
+                        .addStringProperty("path", "要修改的文件路径")
+                        .addStringProperty("old_string", "被替换的原文本")
+                        .addStringProperty("new_string", "替换后的新文本")
+                        .addBooleanProperty("replace_all", "是否替换全部匹配（默认 false）")
+                        .required("path", "old_string", "new_string")
+                        .additionalProperties(false)
+                        .build();
+            case "glob":
+                return JsonObjectSchema.builder()
+                        .addStringProperty("pattern", "文件名匹配模式，如 **/*.java")
+                        .addStringProperty("path", "搜索起始目录（可选，默认当前目录）")
+                        .required("pattern")
                         .additionalProperties(false)
                         .build();
             default:

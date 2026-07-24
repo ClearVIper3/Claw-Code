@@ -162,14 +162,15 @@ public class ContextManager {
 
         sb.append("## 可用工具\n");
         sb.append("系统会执行你请求的工具并把结果返回给你，你据此继续，直到任务完成：\n");
-        sb.append("- file_manager：读写/列目录/创建/删除/信息（command: read|write|list|create|delete|info；path；write 时带 content）\n");
-        sb.append("- command_executor：执行 shell 命令（command）\n");
-        sb.append("- code_executor：运行代码片段（language: java|python|javascript；code）\n");
-        sb.append("- grep_search：搜索文本（pattern；path）\n\n");
+        sb.append("- read：读取文件（path；可选 offset/limit，输出带行号）\n");
+        sb.append("- write：写入/覆盖文件（path；content）\n");
+        sb.append("- edit：精确替换文件内容（path；old_string；new_string；可选 replace_all）\n");
+        sb.append("- bash：执行任意 shell 命令（command；可选 timeout）——搜索文件内容也用它，如 grep/rg\n");
+        sb.append("- glob：按文件名模式查找文件（pattern，如 **/*.java；可选 path）\n\n");
 
         sb.append("## 规则\n");
         sb.append("1. 需要操作时直接调用工具，不要把工具名或命令写进普通文本，也不要编造工具结果。\n");
-        sb.append("2. 写文件用 file_manager(command=write, path, content)；需要编译/运行时再调用 command_executor。\n");
+        sb.append("2. 改动已有文件优先用 edit；新建/覆盖用 write；读文件用 read；跑命令或搜索内容用 bash。\n");
         sb.append("3. 只在确有需要时调用工具；纯咨询类问题直接用中文回答，不调用工具。\n");
         sb.append("4. 完成任务后用简洁自然的中文给出总结。\n");
         return sb.toString();

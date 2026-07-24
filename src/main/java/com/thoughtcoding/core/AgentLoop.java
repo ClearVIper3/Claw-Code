@@ -184,22 +184,19 @@ public class AgentLoop {
         }
     }
 
-    /** 仅写/执行类工具需要确认；只读操作（file_manager read/list/info、grep_search）静默放行。 */
+    /** 仅写/执行类工具需要确认；只读操作（read、glob）静默放行。 */
     private boolean requiresConfirmation(ToolCall call) {
         String name = call.getToolName();
         if (name == null) {
             return true;
         }
         switch (name) {
-            case "file_manager": {
-                Object cmd = call.getParameters() == null ? null : call.getParameters().get("command");
-                String c = cmd == null ? "" : cmd.toString().toLowerCase();
-                return c.equals("write") || c.equals("create") || c.equals("delete");
-            }
-            case "command_executor":
-            case "code_executor":
+            case "bash":
+            case "write":
+            case "edit":
                 return true;
-            case "grep_search":
+            case "read":
+            case "glob":
                 return false;
             default:
                 return true; // MCP / 未知工具默认确认

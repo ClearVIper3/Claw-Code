@@ -53,14 +53,16 @@ public class ToolRegistry {
         }
 
         switch (toolName) {
-            case "file_manager":
-                return appConfig.getTools().getFileManager().isEnabled();
-            case "command_executor":
-                return appConfig.getTools().getCommandExec().isEnabled();
-            case "code_executor":
-                return appConfig.getTools().getCodeExecutor().isEnabled();
-            case "grep_search":
-                return appConfig.getTools().getSearch().isEnabled();
+            case "bash":
+                return appConfig.getTools().getBash().isEnabled();
+            case "read":
+                return appConfig.getTools().getRead().isEnabled();
+            case "write":
+                return appConfig.getTools().getWrite().isEnabled();
+            case "edit":
+                return appConfig.getTools().getEdit().isEnabled();
+            case "glob":
+                return appConfig.getTools().getGlob().isEnabled();
             default:
                 return true;
         }
