@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.thoughtcoding.config.AppConfig;
 import com.thoughtcoding.model.ToolResult;
 import com.thoughtcoding.tools.BaseTool;
+import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -18,7 +19,19 @@ import java.util.Map;
 public class EditTool extends BaseTool {
 
     public EditTool(AppConfig appConfig) {
-        super("edit", "Replace an exact string in a file (old_string -> new_string)");
+        super("edit", "对文件做精确字符串替换：把 old_string 换成 new_string。old_string 必须在文件中唯一，否则需设 replace_all=true。参数：path、old_string、new_string（必填）、replace_all（可选）。");
+    }
+
+    @Override
+    public JsonObjectSchema inputSchema() {
+        return JsonObjectSchema.builder()
+                .addStringProperty("path", "要修改的文件路径")
+                .addStringProperty("old_string", "被替换的原文本")
+                .addStringProperty("new_string", "替换后的新文本")
+                .addBooleanProperty("replace_all", "是否替换全部匹配（默认 false）")
+                .required("path", "old_string", "new_string")
+                .additionalProperties(false)
+                .build();
     }
 
     @Override

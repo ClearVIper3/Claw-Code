@@ -6,6 +6,7 @@ import com.thoughtcoding.model.ToolCall;
 import com.thoughtcoding.model.ToolExecution;
 import com.thoughtcoding.model.ToolResult;
 import com.thoughtcoding.service.PerformanceMonitor;
+import com.thoughtcoding.tools.BaseTool;
 import com.thoughtcoding.tools.ToolDispatcher;
 
 import java.util.ArrayList;
@@ -184,23 +185,15 @@ public class AgentLoop {
         }
     }
 
-    /** 仅写/执行类工具需要确认；只读操作（read、glob）静默放行。 */
+    /** 写/执行类工具需要确认；只读工具（由工具自身 isReadOnly() 声明）静默放行。 */
     private boolean requiresConfirmation(ToolCall call) {
         String name = call.getToolName();
         if (name == null) {
             return true;
         }
-        switch (name) {
-            case "bash":
-            case "write":
-            case "edit":
-                return true;
-            case "read":
-            case "glob":
-                return false;
-            default:
-                return true; // MCP / 未知工具默认确认
-        }
+        BaseTool tool = context.getToolRegistry().getTool(name);
+        // 未知/MCP 工具（未声明只读）默认需确认；工具自身声明 isReadOnly 则静默放行。
+        return tool == null || !tool.isReadOnly();
     }
 
     private String describeTool(ToolCall call) {

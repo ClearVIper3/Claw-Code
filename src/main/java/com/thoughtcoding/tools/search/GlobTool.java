@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.thoughtcoding.config.AppConfig;
 import com.thoughtcoding.model.ToolResult;
 import com.thoughtcoding.tools.BaseTool;
+import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
 
 import java.io.IOException;
 import java.nio.file.FileSystems;
@@ -24,7 +25,22 @@ public class GlobTool extends BaseTool {
     private static final int MAX_RESULTS = 250;
 
     public GlobTool(AppConfig appConfig) {
-        super("glob", "Find files by glob pattern (e.g. **/*.java), newest first");
+        super("glob", "按文件名模式查找文件（如 **/*.java），结果按最后修改时间倒序。参数：pattern（必填）、path（可选，起始目录，默认当前目录）。");
+    }
+
+    @Override
+    public JsonObjectSchema inputSchema() {
+        return JsonObjectSchema.builder()
+                .addStringProperty("pattern", "文件名匹配模式，如 **/*.java")
+                .addStringProperty("path", "搜索起始目录（可选，默认当前目录）")
+                .required("pattern")
+                .additionalProperties(false)
+                .build();
+    }
+
+    @Override
+    public boolean isReadOnly() {
+        return true;
     }
 
     @Override

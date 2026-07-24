@@ -12,7 +12,7 @@ import java.util.stream.Collectors;
  * 把 {@link BaseTool} 转换为 langchain4j 原生 {@link ToolSpecification}。
  *
  * <ul>
- *   <li>四个内置工具用固定的 JSON 参数 schema；</li>
+ *   <li>内置工具经 {@link BaseTool#inputSchema()} 自带 JSON 参数 schema；</li>
  *   <li>MCP 等带 {@code getInputSchema()} 的工具，尽力把其 JSON-schema 结构转成 {@link JsonObjectSchema}；</li>
  *   <li>任何无法识别/转换失败的工具，兜底为通用的 {@code {input: string}}，绝不因单个坏 schema 阻塞整次请求。</li>
  * </ul>
@@ -28,7 +28,7 @@ public final class ToolSpecificationFactory {
         String name = tool.getName();
         String description = tool.getDescription();
 
-        JsonObjectSchema params = builtInSchema(name);
+        JsonObjectSchema params = tool.inputSchema();
         if (params == null) {
             params = fromRawSchema(tool.getInputSchema());
         }
@@ -41,51 +41,6 @@ public final class ToolSpecificationFactory {
                 .description(description == null || description.isBlank() ? name : description)
                 .parameters(params)
                 .build();
-    }
-
-    private static JsonObjectSchema builtInSchema(String name) {
-        switch (name) {
-            case "bash":
-                return JsonObjectSchema.builder()
-                        .addStringProperty("command", "要执行的 shell 命令")
-                        .addIntegerProperty("timeout", "超时秒数（可选）")
-                        .required("command")
-                        .additionalProperties(false)
-                        .build();
-            case "read":
-                return JsonObjectSchema.builder()
-                        .addStringProperty("path", "要读取的文件路径")
-                        .addIntegerProperty("offset", "起始行号（1 起，可选）")
-                        .addIntegerProperty("limit", "读取行数（可选）")
-                        .required("path")
-                        .additionalProperties(false)
-                        .build();
-            case "write":
-                return JsonObjectSchema.builder()
-                        .addStringProperty("path", "要写入的文件路径")
-                        .addStringProperty("content", "文件内容（覆盖写）")
-                        .required("path", "content")
-                        .additionalProperties(false)
-                        .build();
-            case "edit":
-                return JsonObjectSchema.builder()
-                        .addStringProperty("path", "要修改的文件路径")
-                        .addStringProperty("old_string", "被替换的原文本")
-                        .addStringProperty("new_string", "替换后的新文本")
-                        .addBooleanProperty("replace_all", "是否替换全部匹配（默认 false）")
-                        .required("path", "old_string", "new_string")
-                        .additionalProperties(false)
-                        .build();
-            case "glob":
-                return JsonObjectSchema.builder()
-                        .addStringProperty("pattern", "文件名匹配模式，如 **/*.java")
-                        .addStringProperty("path", "搜索起始目录（可选，默认当前目录）")
-                        .required("pattern")
-                        .additionalProperties(false)
-                        .build();
-            default:
-                return null;
-        }
     }
 
     private static JsonObjectSchema genericSchema() {

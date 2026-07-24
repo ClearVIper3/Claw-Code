@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.thoughtcoding.config.AppConfig;
 import com.thoughtcoding.model.ToolResult;
 import com.thoughtcoding.tools.BaseTool;
+import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
@@ -19,9 +20,19 @@ public class BashTool extends BaseTool {
     private final int defaultTimeoutSeconds;
 
     public BashTool(AppConfig appConfig) {
-        super("bash", "Execute an arbitrary shell command; returns combined stdout/stderr");
+        super("bash", "执行任意 shell 命令，返回合并的 stdout/stderr。需要搜索文件内容时也用它（如 grep/rg）。参数：command（必填）、timeout（可选，秒）。");
         Integer t = appConfig.getTools().getBash().getTimeoutSeconds();
         this.defaultTimeoutSeconds = (t == null || t <= 0) ? 60 : t;
+    }
+
+    @Override
+    public JsonObjectSchema inputSchema() {
+        return JsonObjectSchema.builder()
+                .addStringProperty("command", "要执行的 shell 命令")
+                .addIntegerProperty("timeout", "超时秒数（可选）")
+                .required("command")
+                .additionalProperties(false)
+                .build();
     }
 
     @Override

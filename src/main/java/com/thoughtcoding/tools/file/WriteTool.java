@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.thoughtcoding.config.AppConfig;
 import com.thoughtcoding.model.ToolResult;
 import com.thoughtcoding.tools.BaseTool;
+import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -17,7 +18,17 @@ import java.util.Map;
 public class WriteTool extends BaseTool {
 
     public WriteTool(AppConfig appConfig) {
-        super("write", "Write (overwrite) a file with the given content; creates parent dirs");
+        super("write", "写入/覆盖文件，自动创建父目录。参数：path（必填）、content（必填，完整文件内容）。");
+    }
+
+    @Override
+    public JsonObjectSchema inputSchema() {
+        return JsonObjectSchema.builder()
+                .addStringProperty("path", "要写入的文件路径")
+                .addStringProperty("content", "文件内容（覆盖写）")
+                .required("path", "content")
+                .additionalProperties(false)
+                .build();
     }
 
     @Override

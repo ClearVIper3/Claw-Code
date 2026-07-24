@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.thoughtcoding.config.AppConfig;
 import com.thoughtcoding.model.ToolResult;
 import com.thoughtcoding.tools.BaseTool;
+import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -20,9 +21,25 @@ public class ReadTool extends BaseTool {
     private final long maxFileSize;
 
     public ReadTool(AppConfig appConfig) {
-        super("read", "Read a text file with line numbers; supports offset/limit paging");
+        super("read", "读取文本文件，返回带行号的内容（cat -n 风格）。参数：path（必填）、offset（可选，起始行，1 起）、limit（可选，读取行数）用于分页。");
         Long m = appConfig.getTools().getRead().getMaxFileSize();
         this.maxFileSize = (m == null || m <= 0) ? 10485760L : m;
+    }
+
+    @Override
+    public JsonObjectSchema inputSchema() {
+        return JsonObjectSchema.builder()
+                .addStringProperty("path", "要读取的文件路径")
+                .addIntegerProperty("offset", "起始行号（1 起，可选）")
+                .addIntegerProperty("limit", "读取行数（可选）")
+                .required("path")
+                .additionalProperties(false)
+                .build();
+    }
+
+    @Override
+    public boolean isReadOnly() {
+        return true;
     }
 
     @Override
