@@ -148,7 +148,8 @@ public class ContextManager {
     }
 
     /**
-     * 🔥 原生 function calling 的简短系统提示：只讲角色/语言/工具概览，不含任何 ⏺/write_file 文本抓取语法。
+     * 🔥 原生 function calling 的简短系统提示：只讲角色/语言/规则；
+     * 不再罗列工具——工具的名称/说明/参数已由 ToolRegistry.getToolSpecifications() 原生注入给模型。
      */
     private String buildNativeSystemPrompt(String cwd) {
         StringBuilder sb = new StringBuilder();
@@ -160,16 +161,8 @@ public class ContextManager {
         sb.append("工作目录: ").append(cwd).append("\n");
         sb.append("路径支持：相对路径、绝对路径、~ 用户主目录、.. 上级目录。\n\n");
 
-        sb.append("## 可用工具\n");
-        sb.append("系统会执行你请求的工具并把结果返回给你，你据此继续，直到任务完成：\n");
-        sb.append("- read：读取文件（path；可选 offset/limit，输出带行号）\n");
-        sb.append("- write：写入/覆盖文件（path；content）\n");
-        sb.append("- edit：精确替换文件内容（path；old_string；new_string；可选 replace_all）\n");
-        sb.append("- bash：执行任意 shell 命令（command；可选 timeout）——搜索文件内容也用它，如 grep/rg\n");
-        sb.append("- glob：按文件名模式查找文件（pattern，如 **/*.java；可选 path）\n\n");
-
         sb.append("## 规则\n");
-        sb.append("1. 需要操作时直接调用工具，不要把工具名或命令写进普通文本，也不要编造工具结果。\n");
+        sb.append("1. 需要操作时直接调用系统提供的工具（其名称/说明/参数已由系统注入），不要把工具名或命令写进普通文本，也不要编造工具结果。\n");
         sb.append("2. 改动已有文件优先用 edit；新建/覆盖用 write；读文件用 read；跑命令或搜索内容用 bash。\n");
         sb.append("3. 只在确有需要时调用工具；纯咨询类问题直接用中文回答，不调用工具。\n");
         sb.append("4. 完成任务后用简洁自然的中文给出总结。\n");
