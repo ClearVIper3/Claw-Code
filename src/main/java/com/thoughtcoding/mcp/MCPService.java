@@ -4,7 +4,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.thoughtcoding.mcp.model.MCPTool;
 import com.thoughtcoding.model.ToolResult;
 import com.thoughtcoding.tools.BaseTool; // 使用你的 BaseTool 基类
-import com.thoughtcoding.tools.ToolRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -19,12 +18,6 @@ public class MCPService {
     private static final Logger log = LoggerFactory.getLogger(MCPService.class);
     private final Map<String, MCPClient> connectedServers = new ConcurrentHashMap<>();
     private final Map<String, BaseTool> mcpTools = new ConcurrentHashMap<>(); // 改为 BaseTool
-    private final ToolRegistry toolRegistry;
-
-    public MCPService(ToolRegistry toolRegistry) {
-        this.toolRegistry = toolRegistry;
-    }
-    // 添加 clients 映射
     private final Map<String, MCPClient> clients = new ConcurrentHashMap<>();
 
 
@@ -87,16 +80,6 @@ public class MCPService {
                     } catch (Exception e) {
                         return error("工具执行失败: " + e.getMessage());
                     }
-                }
-
-                @Override
-                public String getCategory() {
-                    return "MCP-" + serverName;
-                }
-
-                @Override
-                public boolean isEnabled() {
-                    return true;
                 }
 
                 // 🔥 关键修复：暴露inputSchema给系统提示词（重写BaseTool方法）

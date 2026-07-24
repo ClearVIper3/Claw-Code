@@ -222,16 +222,6 @@ public class FileManagerTool extends BaseTool {
         }
     }
 
-    @Override
-    public String getCategory() {
-        return "file";
-    }
-
-    @Override
-    public boolean isEnabled() {
-        return appConfig.getTools().getFileManager().isEnabled();
-    }
-
     /**
      * 🔥 展开路径中的 ~ 符号为用户主目录
      * 例如：~/Desktop -> /Users/username/Desktop

@@ -125,18 +125,4 @@ public class CommandExecutorTool extends BaseTool {
     private boolean isCommandAllowed(String command) {
         return allowedCommands.contains(command.toLowerCase());
     }
-
-    public Set<String> getAllowedCommands() {
-        return new HashSet<>(allowedCommands);
-    }
-
-    @Override
-    public String getCategory() {
-        return "exec";
-    }
-
-    @Override
-    public boolean isEnabled() {
-        return appConfig != null && appConfig.getTools().getCommandExec().isEnabled();
-    }
 }

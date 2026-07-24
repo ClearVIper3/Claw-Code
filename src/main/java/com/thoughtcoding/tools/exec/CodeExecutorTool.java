@@ -254,14 +254,4 @@ public class CodeExecutorTool extends BaseTool {
             return error("Python execution failed: " + e.getMessage(), System.currentTimeMillis() - startTime);
         }
     }
-
-    @Override
-    public String getCategory() {
-        return "exec";
-    }
-
-    @Override
-    public boolean isEnabled() {
-        return appConfig != null && appConfig.getTools().getCommandExec().isEnabled();
-    }
 }

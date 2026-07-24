@@ -73,7 +73,7 @@ public class ThoughtCodingContext {
         ToolRegistry toolRegistry = new ToolRegistry(appConfig);
 
         // 🔥 创建 MCP 服务
-        MCPService mcpService = new MCPService(toolRegistry);
+        MCPService mcpService = new MCPService();
         MCPToolManager mcpToolManager = new MCPToolManager(mcpService, mcpConfig);
 
         // 注册内置工具 - 传递整个 AppConfig 对象

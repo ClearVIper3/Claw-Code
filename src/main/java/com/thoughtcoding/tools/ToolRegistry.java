@@ -1,10 +1,6 @@
 package com.thoughtcoding.tools;
 
 import com.thoughtcoding.config.AppConfig;
-import com.thoughtcoding.tools.exec.CodeExecutorTool;
-import com.thoughtcoding.tools.exec.CommandExecutorTool;
-import com.thoughtcoding.tools.file.FileManagerTool;
-import com.thoughtcoding.tools.search.GrepSearchTool;
 
 import java.util.*;
 
@@ -13,7 +9,7 @@ import java.util.*;
  *
  * 工具系统的核心管理者，维护了所有可用工具的映射表，并提供统一的调用接口，
  */
-public class ToolRegistry implements ToolProvider {
+public class ToolRegistry {
     private final Map<String, BaseTool> tools;
     private final AppConfig appConfig;
 
@@ -22,55 +18,15 @@ public class ToolRegistry implements ToolProvider {
         this.appConfig = appConfig;
     }
 
-    @Override
-    public void registerTool(BaseTool tool) {
+    // 🔥 统一注册入口，接受 BaseTool（内置工具与 MCP 工具共用）
+    public void register(BaseTool tool) {
         if (isToolEnabled(tool.getName())) {
             tools.put(tool.getName(), tool);
         }
     }
 
-    // 🔥 通用的 register 方法，接受 BaseTool（用于 MCP 工具）
-    public void register(BaseTool tool) {
-        registerTool(tool);
-    }
-
-    // 为每种工具类型添加对应的 register 方法（保持向后兼容）
-    public void register(FileManagerTool tool) {
-        registerTool(tool);
-    }
-
-    public void register(CommandExecutorTool tool) {
-        registerTool(tool);
-    }
-
-    public void register(CodeExecutorTool tool) {
-        registerTool(tool);
-    }
-
-    public void register(GrepSearchTool tool) {
-        registerTool(tool);
-    }
-
-    @Override
     public BaseTool getTool(String toolName) {
         return tools.get(toolName);
-    }
-
-    @Override
-    public boolean isToolAvailable(String toolName) {
-        return tools.containsKey(toolName) && isToolEnabled(toolName);
-    }
-
-    public List<BaseTool> getAllTools() {
-        return new ArrayList<>(tools.values());
-    }
-
-    public Set<String> getAvailableToolNames() {
-        return tools.keySet();
-    }
-
-    public boolean hasTools() {
-        return !tools.isEmpty();
     }
 
     /**

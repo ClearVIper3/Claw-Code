@@ -106,14 +106,4 @@ public class GrepSearchTool extends BaseTool {
             results.add(String.format("%s: ERROR - %s", file, e.getMessage()));
         }
     }
-
-    @Override
-    public String getCategory() {
-        return "exec";
-    }
-
-    @Override
-    public boolean isEnabled() {
-        return appConfig != null && appConfig.getTools().getCommandExec().isEnabled();
-    }
 }
