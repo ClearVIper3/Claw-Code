@@ -31,7 +31,7 @@ public class ContextManager {
 
     // 默认配置
     private static final int DEFAULT_MAX_HISTORY_TURNS = 10;  // 保留10轮（20条消息）
-    private static final int DEFAULT_MAX_CONTEXT_TOKENS = 3000;  // 为历史预留3000 tokens
+    private static final int DEFAULT_MAX_CONTEXT_TOKENS = 1000000;  // 为历史预留1M tokens
     private static final int DEFAULT_RESERVE_TOKENS = 1000;  // 为响应预留1000 tokens
     private static final int DEFAULT_KEEP_RECENT = 3; // 保留3轮（三轮以上的tool_result将被清除）
 
