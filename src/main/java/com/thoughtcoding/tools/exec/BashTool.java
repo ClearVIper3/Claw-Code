@@ -9,6 +9,7 @@ import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
@@ -58,7 +59,14 @@ public class BashTool extends BaseTool {
             ProcessBuilder pb;
             String os = System.getProperty("os.name").toLowerCase();
             if (os.contains("win")) {
-                pb = new ProcessBuilder("cmd.exe", "/c", command);
+                String script = "$ProgressPreference = 'SilentlyContinue'; "
+                        + "$ErrorActionPreference = 'Continue'; "
+                        + "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; "
+                        + "& { " + command + " } 2>&1 | Out-String -Width 300";
+                // 转为 UTF-16LE 字节序列
+                byte[] bytes = script.getBytes(StandardCharsets.UTF_16LE);
+                String encoded = Base64.getEncoder().encodeToString(bytes);
+                pb = new ProcessBuilder("powershell.exe", "-NoProfile", "-EncodedCommand", encoded);
             } else {
                 pb = new ProcessBuilder("sh", "-c", command);
             }
