@@ -25,7 +25,6 @@ public class AgentLoop {
     private final String sessionId;
     private final String modelName;
     private final ToolExecutionConfirmation confirmation;  // 交互式确认组件
-    private final OptionManager optionManager;             // 编号选项 UX
     private final ToolDispatcher toolDispatcher;           // 工具执行唯一收口（沙箱插桩点）
 
     // 缓存本轮模型请求的工具调用（原生路径一轮可能有多个）
@@ -41,7 +40,6 @@ public class AgentLoop {
             context.getUi(),
             context.getUi().getLineReader()
         );
-        this.optionManager = new OptionManager();
         this.toolDispatcher = new ToolDispatcher(context.getToolRegistry());
 
         // 设置消息和工具调用处理器
@@ -60,12 +58,6 @@ public class AgentLoop {
         monitor.start();
 
         try {
-            // 用户输入 1/2/3 选择 AI 提供的编号选项
-            if (optionManager.isOptionInput(input)) {
-                handleOptionSelection(input);
-                return;
-            }
-
             pendingToolCalls.clear();
             history.add(new ChatMessage("user", input));
 
@@ -80,32 +72,9 @@ public class AgentLoop {
         }
     }
 
-    /**
-     * 处理用户的编号选项选择
-     */
-    private void handleOptionSelection(String input) {
-        String command = optionManager.processOptionSelection(input);
-        if (command == null) {
-            context.getUi().displayError("❌ 无效的选项，请输入 1-" + optionManager.getCurrentOptions().size());
-            return;
-        }
-        context.getUi().displayInfo("\n✅ 你选择了：" + command);
-        context.getUi().displayInfo("正在执行...\n");
-        processInput(command);
-    }
-
     private void handleMessage(ChatMessage message) {
         // 流式输出的实时显示
         context.getUi().displayAIMessage(message);
-
-        // 从 AI 响应中提取编号选项（供用户后续用 1/2/3 选择）
-        if (message.isAssistantMessage()) {
-            boolean hasOptions = optionManager.extractOptionsFromResponse(message.getContent());
-            if (hasOptions) {
-                context.getUi().displayInfo("\n💡 请输入选项编号（1-" +
-                    optionManager.getCurrentOptions().size() + "）来选择你想要的操作");
-            }
-        }
         // 不在这里写历史：LangChainService 在流式完成后写入完整的 assistant 消息
     }
 
