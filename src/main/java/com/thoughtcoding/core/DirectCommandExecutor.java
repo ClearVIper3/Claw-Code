@@ -1,6 +1,6 @@
 package com.thoughtcoding.core;
 
-import com.thoughtcoding.tools.exec.BashTool;
+import com.thoughtcoding.tools.BashTool;
 import com.thoughtcoding.ui.ThoughtCodingUI;
 import com.thoughtcoding.model.ToolResult;
 

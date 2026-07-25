@@ -1,9 +1,8 @@
-package com.thoughtcoding.tools.exec;
+package com.thoughtcoding.tools;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.thoughtcoding.config.AppConfig;
 import com.thoughtcoding.model.ToolResult;
-import com.thoughtcoding.tools.BaseTool;
 import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
 
 import java.io.BufferedReader;

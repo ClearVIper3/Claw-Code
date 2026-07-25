@@ -1,28 +1,36 @@
-package com.thoughtcoding.tools.search;
+package com.thoughtcoding.tools;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.thoughtcoding.config.AppConfig;
 import com.thoughtcoding.model.ToolResult;
-import com.thoughtcoding.tools.BaseTool;
 import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
 
 import java.io.IOException;
 import java.nio.file.FileSystems;
+import java.nio.file.FileVisitOption;
+import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.PathMatcher;
 import java.nio.file.Paths;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Stream;
+import java.util.Set;
 
 /**
  * glob 工具：按文件名模式（如 **&#47;*.java）查找文件，命中按最后修改时间倒序。
  */
 public class GlobTool extends BaseTool {
     private static final int MAX_RESULTS = 250;
+    private static final int MAX_DEPTH = 20;
+
+    /** 为性能跳过的大型/虚拟目录 */
+    private static final Set<String> SKIP_DIRS = Set.of("node_modules", ".git", ".svn", ".hg");
 
     public GlobTool(AppConfig appConfig) {
         super("glob", "按文件名模式查找文件（如 **/*.java），结果按最后修改时间倒序。参数：pattern（必填）、path（可选，起始目录，默认当前目录）。");
@@ -66,18 +74,42 @@ public class GlobTool extends BaseTool {
                 return error("目录不存在: " + basePathStr, System.currentTimeMillis() - startTime);
             }
 
-            PathMatcher matcher = FileSystems.getDefault().getPathMatcher("glob:" + pattern);
+            final PathMatcher matcher = FileSystems.getDefault().getPathMatcher("glob:" + pattern);
 
             List<Path> matches = new ArrayList<>();
-            try (Stream<Path> stream = Files.walk(base)) {
-                stream.filter(Files::isRegularFile)
-                        .forEach(f -> {
-                            Path rel = base.relativize(f);
-                            if (matcher.matches(rel) || matcher.matches(f.getFileName())) {
-                                matches.add(f);
+            Files.walkFileTree(base, EnumSet.noneOf(FileVisitOption.class), MAX_DEPTH,
+                    new SimpleFileVisitor<>() {
+                        @Override
+                        public FileVisitResult preVisitDirectory(Path dir,
+                                BasicFileAttributes attrs) {
+                            Path name = dir.getFileName();
+                            if (name != null && SKIP_DIRS.contains(name.toString())) {
+                                return FileVisitResult.SKIP_SUBTREE;
                             }
-                        });
-            }
+                            return FileVisitResult.CONTINUE;
+                        }
+
+                        @Override
+                        public FileVisitResult visitFile(Path file,
+                                BasicFileAttributes attrs) {
+                            Path rel = base.relativize(file);
+                            // 对根目录的直接文件（无父目录），补一个 "./" 前缀，
+                            // 使得 **/xxx 之类的递归模式也能匹配根级文件
+                            if (rel.getParent() == null) {
+                                rel = Path.of(".", rel.toString());
+                            }
+                            if (matcher.matches(rel) || matcher.matches(file.getFileName())) {
+                                matches.add(file);
+                            }
+                            return FileVisitResult.CONTINUE;
+                        }
+
+                        @Override
+                        public FileVisitResult visitFileFailed(Path file,
+                                IOException exc) {
+                            return FileVisitResult.SKIP_SUBTREE;
+                        }
+                    });
 
             if (matches.isEmpty()) {
                 return success("无匹配文件: " + pattern, System.currentTimeMillis() - startTime);

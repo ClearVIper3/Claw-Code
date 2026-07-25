@@ -122,19 +122,16 @@ public class ToolExecutionConfirmation {
 
         // 🔥 根据工具类型生成不同的选项
         if (toolName.equals("write")) {
-            // 创建/写入文件的选项
             displayCreateFileOptions(execution);
         } else if (toolName.equals("edit")) {
-            // 编辑文件的选项
             displayEditFileOptions(execution);
         } else if (toolName.equals("read")) {
-            // 读取文件的选项
             displayReadFileOptions(execution);
         } else if (toolName.equals("bash")) {
-            // 执行命令的选项
             displayExecuteCommandOptions(execution);
+        } else if (toolName.equals("glob")) {
+            displayGlobOptions(execution);
         } else {
-            // 默认选项
             displayDefaultOptions(execution);
         }
 
@@ -189,6 +186,14 @@ public class ToolExecutionConfirmation {
     private void displayReadFileOptions(ToolExecution execution) {
         ui.getTerminal().writer().println("❯ 1. 是的，读取文件");
         ui.getTerminal().writer().println("  2. 取消，不读取");
+    }
+
+    /**
+     * 显示 glob 查找文件的选项
+     */
+    private void displayGlobOptions(ToolExecution execution) {
+        ui.getTerminal().writer().println("❯ 1. 是的，执行查找");
+        ui.getTerminal().writer().println("  2. 取消，不查找");
     }
 
     /**
