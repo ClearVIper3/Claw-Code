@@ -2,7 +2,7 @@
 
 ![ThoughtCoding CLI](picture.png)
 
-一个基于 LangChain 的交互式代码助手 CLI 工具，支持流式输出、工具调用和智能对话。
+一个基于 LangChain4j 的交互式代码助手 CLI 工具，支持原生 Function Calling、流式输出和智能对话。
 
 ## 🎥 项目演示
 
@@ -14,6 +14,7 @@
 
 - **智能对话** - 基于多种 AI 模型的智能代码助手
 - **流式输出** - 支持实时流式响应，提供更好的交互体验
+- **原生 Function Calling** - 基于 LangChain4j 原生 function calling 的多轮 agentic 循环
 - **MCP 集成** - 内置 Model Context Protocol 支持，可连接丰富的工具生态系统
 - **工具扩展** - 通过 MCP 支持文件管理、数据库操作、搜索、GitHub 等 50+ 种工具
 - **动态工具发现** - 自动发现和注册 MCP 服务器的可用工具
@@ -25,10 +26,9 @@
 - **会话管理** - 会话保存、加载和会话继续功能
 - **上下文管理** - 智能上下文窗口管理，Token 优化，支持滑动窗口策略
 - **项目感知** - 自动检测项目类型（Maven/Gradle/NPM），提供项目上下文
-- **选项管理** - AI 提供多选项，用户可通过数字选择
-- **工具确认** - 工具执行前用户确认机制，提高安全性
+- **工具确认** - 工具执行前用户确认机制，只读工具静默放行，提高安全性
 - **性能监控** - 内置性能监控和 Token 使用统计
-- **智能搜索** - 具备代码搜索和文件内容搜索能力
+- **智能搜索** - 具备文件搜索和文件内容搜索能力
 - **跨平台支持** - 支持 Windows、Linux、macOS 系统
 
 ## 🏗项目结构
@@ -43,12 +43,10 @@ ThoughtCoding/
 │   │   └── MCPCommand.java              # MCP 管理命令
 │   ├── 📁 core/                         # 🔧 核心功能
 │   │   ├── ThoughtCodingContext.java    # 应用上下文
-│   │   ├── AgentLoop.java               # Agent 循环引擎
-│   │   ├── MessageHandler.java          # 消息处理器
+│   │   ├── AgentLoop.java               # Agent 循环引擎（原生 function calling）
 │   │   ├── StreamingOutput.java         # 流式输出处理
 │   │   ├── ProjectContext.java          # 项目上下文检测
-│   │   ├── OptionManager.java           # 选项管理（AI提供多选项）
-│   │   ├── ToolExecutionConfirmation.java # 工具执行确认
+│   │   ├── ToolExecutionConfirmation.java # 工具执行确认（YES/NO 两选项）
 │   │   └── DirectCommandExecutor.java   # 直接命令执行器
 │   ├── 📁 service/                      # 🛠️ 服务层
 │   │   ├── LangChainService.java        # AI 服务核心
@@ -56,20 +54,19 @@ ThoughtCoding/
 │   │   ├── AIService.java               # AI 服务接口
 │   │   ├── ContextManager.java          # 上下文管理器（历史窗口、Token控制）
 │   │   └── PerformanceMonitor.java      # 性能监控
-│   ├── 📁 tools/                        # 🔨 工具集合
-│   │   ├── BaseTool.java                # 工具基类
+│   ├── 📁 tools/                        # 🔨 工具集合（扁平结构）
+│   │   ├── BaseTool.java                # 工具基类（name/description/schema/isReadOnly）
 │   │   ├── ToolRegistry.java            # 工具注册中心
-│   │   ├── 📁 exec/                     # 执行工具
-│   │   │   ├── CommandExecutorTool.java # 命令执行
-│   │   │   └── CodeExecutorTool.java    # 代码执行
-│   │   ├── 📁 file/                     # 文件工具
-│   │   │   └── FileManagerTool.java     # 文件管理
-│   │   └── 📁 search/                   # 搜索工具
-│   │       └── GrepSearchTool.java      # 文本搜索
+│   │   ├── ToolDispatcher.java          # 工具执行唯一收口（沙箱插桩点）
+│   │   ├── ToolSpecificationFactory.java # ToolSpecification 工厂（内置+MCP统一转换）
+│   │   ├── BashTool.java                # 命令执行（Windows→PowerShell, Linux/Mac→bash）
+│   │   ├── ReadTool.java                # 文件读取（cat -n 风格行号输出）
+│   │   ├── WriteTool.java               # 文件创建/覆写
+│   │   ├── EditTool.java                # 精确字符串替换（\r\n 自动规范化）
+│   │   └── GlobTool.java                # 文件搜索（walkFileTree，跳过 node_modules）
 │   ├── 📁 mcp/                          # 🔌 MCP 功能模块
 │   │   ├── MCPService.java              # MCP 服务管理器
 │   │   ├── MCPClient.java               # MCP 客户端
-│   │   ├── MCPToolAdapter.java          # MCP 工具适配器
 │   │   ├── MCPToolManager.java          # MCP 工具管理器
 │   │   └── 📁 model/                    # MCP 协议数据模型
 │   │       ├── MCPRequest.java          # MCP 请求
@@ -96,6 +93,7 @@ ThoughtCoding/
 │   │   ├── ChatMessage.java             # 聊天消息
 │   │   ├── SessionData.java             # 会话数据
 │   │   ├── ToolCall.java                # 工具调用
+│   │   ├── ToolCallRef.java             # 工具调用引用
 │   │   ├── ToolExecution.java           # 工具执行记录
 │   │   ├── ToolResult.java              # 工具结果
 │   │   └── ModelConfig.java             # 模型配置
@@ -108,7 +106,6 @@ ThoughtCoding/
 │   ├── thought                         # Linux/macOS 脚本
 │   └── thought.bat                     # Windows 脚本
 ├── 📁 sessions/                         # 💾 会话存储
-├── ⚙️ config.yaml                       # 配置文件
 ├── 📜 pom.xml                          # Maven 配置
 └── 📖 README.md                        # 项目说明
 ```
@@ -195,6 +192,7 @@ ThoughtCoding/
 - `ModelConfig.java` - 模型配置
 - `SessionData.java` - 会话数据
 - `ToolCall.java` - 工具调用
+- `ToolCallRef.java` - 工具调用引用
 - `ToolExecution.java` - 工具执行记录
 - `ToolResult.java` - 工具结果
 
@@ -209,13 +207,8 @@ ThoughtCoding/
 
 `AgentLoop.java`
 
-- **功能**：Agent 循环实现类
-- **特性**：基于 LangChain4j 实现智能对话，支持工具调用和选项管理
-
-`MessageHandler.java`
-
-- **功能**：消息处理器
-- **特性**：处理流式输出，实时显示 AI 响应
+- **功能**：Agent 循环引擎
+- **特性**：基于 LangChain4j 原生 function calling 实现多轮 agentic 循环，工具结果自动回喂模型，支持工具执行确认
 
 `StreamingOutput.java`
 
@@ -227,15 +220,10 @@ ThoughtCoding/
 - **功能**：项目上下文检测
 - **特性**：自动识别项目类型（Maven/Gradle/NPM等），提供项目相关信息
 
-`OptionManager.java`
-
-- **功能**：选项管理器
-- **特性**：从 AI 响应中提取多选项，支持用户选择（1/2/3）
-
 `ToolExecutionConfirmation.java`
 
-- **功能**：工具执行确认
-- **特性**：在执行工具前进行用户确认，提高安全性
+- **功能**：工具执行确认组件
+- **特性**：写/执行类工具执行前展示工具名和参数，YES/NO 两选项确认；只读工具（read、glob）静默放行
 
 `DirectCommandExecutor.java`
 
@@ -261,24 +249,37 @@ ThoughtCoding/
 
 ### `src/main/java/com/thoughtcoding/tools/` - 工具集合
 
-**功能**: 各种功能工具的实现
+**功能**: 内置工具的实现，统一继承 `BaseTool` 基类。
 
-`ToolProvider.java`
+`BaseTool.java`
 
-- **功能**：工具提供接口
+- **功能**：工具抽象基类
+- **特性**：定义 `name`、`description`、`inputSchema()`、`isReadOnly()` 等标准接口；`execute(String)` 接收 JSON 参数
 
 `ToolRegistry.java`
 
 - **功能**：工具注册中心
+- **特性**：统一管理内置工具与 MCP 工具，提供按名查找和 ToolSpecification 列表生成
 
-**主要工具**:
+`ToolDispatcher.java`
 
-- **文件管理工具**: 文件读写、目录操作 (`FileManagerTool.java`)
-- **命令执行工具**: 执行系统命令 (`CommandExecutorTool.java`)
-- **代码执行工具**: 执行代码片段 (`CodeExecutorTool.java`)
-- **搜索工具**: 文件内容搜索 (`GrepSearchTool.java`)
-- **扩展性**: 容易添加新工具，基于 `BaseTool` 基类
-- **工具提供者**: `ToolProvider.java` 定义工具提供接口，支持动态注册
+- **功能**：工具执行唯一收口
+- **特性**：所有工具调用经此分发，作为沙箱插桩点（未来 workspace 边界检查在此一处即可覆盖 100% 写/执行操作）
+
+`ToolSpecificationFactory.java`
+
+- **功能**：将 BaseTool 转换为 LangChain4j 原生 ToolSpecification
+- **特性**：内置工具用 `inputSchema()` 自带 schema，MCP 工具从原始 JSON schema 转换，失败时兜底通用 schema
+
+**内置工具**:
+
+- **BashTool** - 命令执行，Windows 自动切换 PowerShell，Linux/Mac 使用 bash
+- **ReadTool** - 文件读取，`cat -n` 风格带行号输出，只读工具无需确认
+- **WriteTool** - 文件创建/覆写，自动创建父目录
+- **EditTool** - 精确字符串替换，自动规范化 `\r\n` → `\n`（兼容 Windows 文件）
+- **GlobTool** - 文件搜索，基于 `walkFileTree` 跨平台实现，跳过 `node_modules`，只读工具无需确认
+
+**扩展性**: 继承 `BaseTool` 并注册到 `ToolRegistry` 即可添加新工具。
 
 ### `src/main/java/com/thoughtcoding/mcp/` - MCP 功能
 
@@ -298,11 +299,6 @@ ThoughtCoding/
 
 - **功能**: 管理所有 MCP 工具的统一入口
 - **特性**: 工具发现、注册、调用路由
-
-`MCPToolAdapter.java` - MCP 工具适配器
-
-- **功能**: 将 MCP 工具适配为内部 BaseTool 格式
-- **特性**: 统一工具接口，隐藏 MCP 通信细节
 
 **`mcp/model/`** - MCP 协议数据模型
 
@@ -342,8 +338,6 @@ ThoughtCoding/
   - **特性**：处理用户输入，支持命令补全和历史记录
 - **`ProgressIndicator.java`**：进度指示器
   - **特性**：显示任务执行进度，提供视觉反馈
-- **`ToolDisplay.java`**：工具显示类
-  - **特性**：格式化显示工具调用和执行结果
 - **`StatusBar.java`**：状态栏类
   - **特性**：显示当前状态信息（模型、会话、Token 使用等）
 
@@ -354,118 +348,56 @@ ThoughtCoding/
 
 ## ⚙ 配置说明
 
-### 配置文件 (`config.yaml`)
+### 配置文件 (`src/main/resources/config.yaml`)
 
-```
-# ThoughtCoding AI服务配置
+```yaml
+# ThoughtCoding 配置模板
+# 用法：复制为 config.yaml（已被 .gitignore 忽略），填入你的 API Key。
+# 注意：本项目使用 langchain4j 原生 function calling，必须使用支持 function calling 的模型。
+
 models:
-  # DeepSeek 模型
-  deepseek-v1:
-    name: "deepseek-chat"
-    baseURL: "https://api.deepseek.com/v1"
+  deepseek-v4-pro:
+    name: "deepseek-v4-pro"
+    baseURL: "https://api.deepseek.com"
     apiKey: "your-api-key-here"
     streaming: true
     maxTokens: 4096
-    temperature: 0.7
-
-    # 阿里云通义千问
-  qwen-plus:
-    name: "qwen-plus"
-    baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1"
-    apiKey: "your-api-key-here"
-    streaming: true
-    maxTokens: 4096
-    temperature: 0.7
+    temperature: 0
 
 # 默认模型
-defaultModel: "deepseek-v1"
+defaultModel: "deepseek-v4-pro"
+
+# AI 行为配置
+ai:
+  autoProcessToolResults: true  # true=工具结果自动回喂模型，形成 agentic 多轮循环
+  maxToolIterations: 10         # 单次用户输入内的最大工具轮次上限
 
 # 工具配置
 tools:
-  fileManager:
+  bash:
     enabled: true
-    maxFileSize: 10485760
-    allowedCommands: ["read", "write", "list", "create", "delete", "info"]
-    timeoutSeconds: 30
-    allowedLanguages: ["java", "python", "javascript"]
-
-  commandExec:
+  read:
     enabled: true
-    maxFileSize: 10485760
-    timeoutSeconds: 30
-
-  codeExecutor:
+  write:
     enabled: true
-    maxFileSize: 10485760
-    timeoutSeconds: 60
-    allowedLanguages: ["java", "python", "javascript", "bash"]
-
-  search:
+  edit:
     enabled: true
-    maxFileSize: 10485760
-    timeoutSeconds: 30
+  glob:
+    enabled: true
 
-# Session Configuration
-session:
-  autoSave: true
-  maxSessions: 100
-  sessionTimeout: 86400000  # 24 hours in milliseconds
-
-# UI Configuration
-ui:
-  theme: "default"
-  showTimestamps: true
-  colorfulOutput: true
-  progressAnimation: true
-
-# Performance Configuration
-performance:
-  enableMonitoring: true
-  logLevel: "INFO"
-  cacheSize: 1000
-  
-# MCP 配置
+# MCP 配置（可选）
 mcp:
   enabled: true
   autoDiscover: true
   connectionTimeout: 30
   servers:
-    #Filesystem
     - name: "filesystem"
-      command: "D:\\Program Files\\node.js\\npx.cmd"
+      command: "npx"
       enabled: true
       args:
         - "@modelcontextprotocol/server-filesystem"
         - "."
 
-    # PostgreSQL
-    - name: "postgres"
-      command: "npx"
-      enabled: false
-      args:
-        - "@modelcontextprotocol/server-postgres"
-        - "--connectionString"
-        - "postgresql://user:pass@localhost:5432/db"
-
-    # SQLite
-    - name: "sqlite"
-      command: "npx"
-      enabled: false
-      args:
-        - "@modelcontextprotocol/server-sqlite"
-        - "--database"
-        - "./data.db"
-
-    # MySQL
-    - name: "mysql"
-      command: "npx"
-      enabled: false
-      args:
-        - "@modelcontextprotocol/server-mysql"
-        - "--connectionString"
-        - "mysql://user:pass@localhost:3306/db"
-
-    # GitHub
     - name: "github"
       command: "npx"
       enabled: false
@@ -473,66 +405,40 @@ mcp:
         - "@modelcontextprotocol/server-github"
         - "--token"
         - "your_github_token_here"
-        
-    # GitLab - GitLab 代码仓库操作工具（新增配置）
-    - name: "gitlab"
-      command: "npx"
-      enabled: false  # 按需开启，首次使用建议先设为 false 测试
-      args:
-        - "@modelcontextprotocol/server-gitlab"  # GitLab 对应的 MCP 服务插件
-        - "YOUR_GITLAB_PERSONAL_ACCESS_TOKEN"  # 🔥 替换为你的 GitLab 个人访问令牌
-        - "https://gitlab.com"  # GitLab 实例地址（私有部署请替换为自定义域名，如 https://gitlab.yourcompany.com）
-        - "your-gitlab-username"  # 你的 GitLab 用户名（可选，部分场景用于权限校验）
-        - "your-project-id"  # 目标项目 ID（可选，指定默认操作的项目，不填则支持全权限访问）
-
-    #Weather
-    - name: "weather"
-      command: "npx"
-      enabled: false
-      args:
-        - "@coding-squirrel/mcp-weather-server"
-        - "--apiKey"
-        - "your_weather_api_key"
 ```
 
 ### 配置项说明
 
-- models : 支持的AI模型配置
+- `models` : 支持的 AI 模型配置
   - `name`: 模型名称
   - `baseURL`: API 基础 URL
   - `apiKey`: API 密钥
   - `streaming`: 是否启用流式输出
-  - `maxTokens` - 单次请求最大 Token 数
-  - `temperature` - 生成温度
-  
+  - `maxTokens`: 单次请求最大 Token 数
+  - `temperature`: 生成温度（推荐 0 以获得确定性工具调用）
+
 - `defaultModel`: 默认使用的模型
 
-- tools : 工具配置
-  - `fileManager`: 文件管理工具配置
-  - `commandExec`: 命令执行工具配置
-  - `codeExecutor` - 代码执行工具配置
-  - `search` - 搜索工具配置
+- `ai` : AI 行为配置
+  - `autoProcessToolResults`: 工具结果是否自动回喂模型继续对话
+  - `maxToolIterations`: 单次用户输入内最大工具调用轮次
 
-- `session` : 会话管理配置
+- `tools` : 内置工具配置
+  - `bash`: 命令执行工具（Windows→PowerShell, Linux/Mac→bash）
+  - `read`: 文件读取工具（只读，无需确认）
+  - `write`: 文件创建/覆写工具
+  - `edit`: 精确字符串替换工具（自动规范化 `\r\n`）
+  - `glob`: 文件搜索工具（只读，无需确认）
 
-- `ui` : 界面显示配置
-
-- `performance` : 性能监控配置
-
-- `mcp` - MCP 功能配置
-
-  - `enabled` : 是否启用 MCP 功能模块
-  - `autoDiscover` : 是否自动发现和注册 MCP 服务器的工具
-  - `connectionTimeout` : MCP 服务器连接和初始化的超时时间
-
-  - `servers` : MCP 服务器列表配置
-
-    - `name` - 服务器名称
-    - `command` - 启动 MCP 服务器的命令或可执行文件路径
-
-    - `enabled` - 是否启用该服务器连接
-
-    - `args` - 传递给 MCP 服务器的命令行参数
+- `mcp` : MCP 功能配置
+  - `enabled`: 是否启用 MCP 功能模块
+  - `autoDiscover`: 是否自动发现和注册 MCP 服务器的工具
+  - `connectionTimeout`: MCP 服务器连接和初始化的超时时间
+  - `servers`: MCP 服务器列表配置
+    - `name`: 服务器名称
+    - `command`: 启动 MCP 服务器的命令
+    - `enabled`: 是否启用该服务器
+    - `args`: 传递给 MCP 服务器的命令行参数
 
 ## 🛠️ 快速开始
 
@@ -553,18 +459,20 @@ git clone https://github.com/zengxinyueooo/ThoughtCoding.git
 
 ### 配置 API
 
+将 `src/main/resources/config.yaml` 复制到项目根目录为 `config.yaml`，编辑并填入你的 API Key。
+
 #### **Linux/macOS**
 
 ```
-cp config.yaml.example config.yaml
-# 编辑 config.yaml，填入您的 DeepSeek API 密钥
+cp src/main/resources/config.yaml config.yaml
+# 编辑 config.yaml，填入你的 API 密钥
 ```
 
 #### **Windows**
 
 ```
-copy config.yaml.example config.yaml
-# 编辑 config.yaml，填入您的 DeepSeek API 密钥
+copy src\main\resources\config.yaml config.yaml
+# 编辑 config.yaml，填入你的 API 密钥
 ```
 
 ### 构建项目
@@ -651,8 +559,11 @@ cd ThoughtCoding
 
 继承 `BaseTool` 基类并实现核心方法：
 
-```
+```java
 package com.thoughtcoding.tools;
+
+import com.thoughtcoding.model.ToolResult;
+import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
 
 public class MyTool extends BaseTool {
     
@@ -662,19 +573,31 @@ public class MyTool extends BaseTool {
     
     @Override
     public ToolResult execute(String input) {
+        // input 为 JSON 字符串，从 ToolDispatcher 传入
         // 工具实现逻辑
-        return new ToolResult("工具结果", true);
+        return success("工具执行结果");
+    }
+    
+    @Override
+    public JsonObjectSchema inputSchema() {
+        // 定义工具参数 schema（供模型了解参数结构）
+        return JsonObjectSchema.builder()
+            .addStringProperty("param1", "参数1描述")
+            .build();
+    }
+    
+    @Override
+    public boolean isReadOnly() {
+        // 只读工具返回 true，静默放行无需用户确认
+        return false;
     }
 }
 ```
 
-在 `ToolRegistry.java` 中注册新工具：
+在 `ThoughtCodingContext.java` 中注册新工具：
 
-```
-public void registerTools() {
-    registerTool(new MyTool());
-    // 其他工具注册...
-}
+```java
+toolRegistry.register(new MyTool());
 ```
 
 ### 使用类型定义
@@ -837,14 +760,12 @@ SessionData session = new SessionData("session-id", "标题", "model");
 
 - **语言**: Java 17+
 - **构建工具**: Maven
-- **AI 框架**: LangChain4j
-- **MCP 支持**: Model Context Protocol 客户端
+- **AI 框架**: LangChain4j（原生 Function Calling）
+- **MCP 支持**: Model Context Protocol 客户端（JSON-RPC over stdio）
 - **UI 框架**: JLine + 自定义 ANSI 终端 UI
 - **配置管理**: YAML + Jackson
 - **命令行**: Picocli
-- **工具调用**: LangChain Tools 集成
 - **JSON 处理**: Jackson Databind
-- **协议通信**: STDIO + 进程间通信
 
 ------
 
