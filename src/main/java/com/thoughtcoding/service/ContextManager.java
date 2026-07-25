@@ -160,7 +160,7 @@ public class ContextManager {
         sb.append("## 工作环境\n");
         sb.append("工作目录: ").append(cwd).append("\n");
         sb.append("路径支持：相对路径、绝对路径、~ 用户主目录、.. 上级目录。\n\n");
-        sb.append(buildSystemInfo());
+        sb.append("操作系统: ").append(System.getProperty("os.name")).append("\n");
         sb.append("\n");
 
         sb.append("## 规则\n");
@@ -168,18 +168,6 @@ public class ContextManager {
         sb.append("2. 改动已有文件优先用 edit；新建/覆盖用 write；读文件用 read；跑命令或搜索内容用 bash。\n");
         sb.append("3. 只在确有需要时调用工具；纯咨询类问题直接用中文回答，不调用工具。\n");
         sb.append("4. 完成任务后用简洁自然的中文给出总结。\n");
-        return sb.toString();
-    }
-
-    private String buildSystemInfo() {
-        boolean isWindows = System.getProperty("os.name").toLowerCase().contains("win");
-        StringBuilder sb = new StringBuilder();
-        sb.append("操作系统: ").append(System.getProperty("os.name")).append("\n");
-        if (isWindows) {
-            sb.append("当前使用的 shell 为 PowerShell。\n");
-        } else {
-            sb.append("当前使用的 shell 为 bash。\n");
-        }
         return sb.toString();
     }
 

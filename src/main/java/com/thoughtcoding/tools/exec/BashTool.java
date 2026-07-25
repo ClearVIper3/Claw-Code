@@ -19,9 +19,11 @@ import java.util.concurrent.TimeUnit;
  */
 public class BashTool extends BaseTool {
     private final int defaultTimeoutSeconds;
+    private static final String SHELL =
+            System.getProperty("os.name").toLowerCase().contains("win") ? "PowerShell" : "bash";
 
     public BashTool(AppConfig appConfig) {
-        super("bash", "执行任意 shell 命令，返回合并的 stdout/stderr。需要搜索文件内容时也用它（如 grep/rg）。参数：command（必填）、timeout（可选，秒）。");
+        super("bash", "执行任意 " + SHELL + " 命令，返回合并的 stdout/stderr。需要搜索文件内容时也用它（如 grep/rg）。参数：command（必填）、timeout（可选，秒）。");
         Integer t = appConfig.getTools().getBash().getTimeoutSeconds();
         this.defaultTimeoutSeconds = (t == null || t <= 0) ? 60 : t;
     }
