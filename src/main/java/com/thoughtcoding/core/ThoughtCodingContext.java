@@ -11,16 +11,15 @@ import com.thoughtcoding.service.LangChainService;
 import com.thoughtcoding.service.PerformanceMonitor;
 import com.thoughtcoding.service.SessionService;
 import com.thoughtcoding.tools.*;
-import com.thoughtcoding.tools.exec.CodeExecutorTool;
-import com.thoughtcoding.tools.exec.CommandExecutorTool;
-import com.thoughtcoding.tools.file.FileManagerTool;
-import com.thoughtcoding.tools.search.GrepSearchTool;
+import com.thoughtcoding.tools.BashTool;
+import com.thoughtcoding.tools.EditTool;
+import com.thoughtcoding.tools.ReadTool;
+import com.thoughtcoding.tools.WriteTool;
+import com.thoughtcoding.tools.GlobTool;
 import com.thoughtcoding.ui.ThoughtCodingUI;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
 /**
  * 上下文初始化过程
@@ -73,24 +72,28 @@ public class ThoughtCodingContext {
         ToolRegistry toolRegistry = new ToolRegistry(appConfig);
 
         // 🔥 创建 MCP 服务
-        MCPService mcpService = new MCPService(toolRegistry);
+        MCPService mcpService = new MCPService();
         MCPToolManager mcpToolManager = new MCPToolManager(mcpService, mcpConfig);
 
         // 注册内置工具 - 传递整个 AppConfig 对象
-        if (appConfig.getTools().getFileManager().isEnabled()) {
-            toolRegistry.register(new FileManagerTool(appConfig));
+        if (appConfig.getTools().getBash().isEnabled()) {
+            toolRegistry.register(new BashTool(appConfig));
         }
 
-        if (appConfig.getTools().getCommandExec().isEnabled()) {
-            toolRegistry.register(new CommandExecutorTool(appConfig));
+        if (appConfig.getTools().getRead().isEnabled()) {
+            toolRegistry.register(new ReadTool(appConfig));
         }
 
-        if (appConfig.getTools().getCodeExecutor().isEnabled()) {
-            toolRegistry.register(new CodeExecutorTool(appConfig));
+        if (appConfig.getTools().getWrite().isEnabled()) {
+            toolRegistry.register(new WriteTool(appConfig));
         }
 
-        if (appConfig.getTools().getSearch().isEnabled()) {
-            toolRegistry.register(new GrepSearchTool(appConfig));
+        if (appConfig.getTools().getEdit().isEnabled()) {
+            toolRegistry.register(new EditTool(appConfig));
+        }
+
+        if (appConfig.getTools().getGlob().isEnabled()) {
+            toolRegistry.register(new GlobTool(appConfig));
         }
 
         // 🔥 初始化 MCP 服务（如果启用）

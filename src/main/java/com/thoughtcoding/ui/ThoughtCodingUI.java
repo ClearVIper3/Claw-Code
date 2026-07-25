@@ -1,7 +1,6 @@
 package com.thoughtcoding.ui;
 
 import com.thoughtcoding.model.ChatMessage;
-import com.thoughtcoding.model.ToolCall;
 import com.thoughtcoding.service.PerformanceMonitor;
 
 import com.thoughtcoding.ui.component.*;
@@ -23,7 +22,6 @@ public class ThoughtCodingUI {
     private final Terminal terminal;
     private final LineReader lineReader;
     private final ChatRenderer chatRenderer;
-    private final ToolDisplay toolDisplay;
     private final StatusBar statusBar;
     private final ProgressIndicator progressIndicator;
     private final InputHandler inputHandler;
@@ -55,7 +53,6 @@ public class ThoughtCodingUI {
 
             // 初始化UI组件
             this.chatRenderer = new ChatRenderer(terminal);//聊天渲染器
-            this.toolDisplay = new ToolDisplay(terminal);//工具显示
             this.statusBar = new StatusBar(terminal);//状态栏
             this.progressIndicator = new ProgressIndicator(terminal);//进度指示器
             this.inputHandler = new InputHandler(
@@ -230,18 +227,6 @@ public class ThoughtCodingUI {
             terminal.writer().print(AnsiColors.BRIGHT_CYAN + content + AnsiColors.RESET);
             terminal.writer().flush();
         }
-    }
-
-    public void displayToolCall(ToolCall toolCall) {
-        toolDisplay.displayToolCall(toolCall);
-    }
-
-    /**
-     * 显示 Claude Code 风格的工具调用
-     * 例如：⏺ Write(HelloWorld.java)
-     */
-    public void displayClaudeStyleToolCall(String toolName, String target, String result) {
-        toolDisplay.displayClaudeStyleToolCall(toolName, target, result);
     }
 
     public void displayInfo(String info) {

@@ -159,61 +159,64 @@ public class AppConfig {
 
     @Data
     public static class ToolsConfig {
-        @JsonProperty("fileManager")
-        private ToolConfig fileManager = new ToolConfig(); // Ensure fileManager is initialized
+        @JsonProperty("bash")
+        private ToolConfig bash = new ToolConfig();
 
-        @JsonProperty("commandExec")
-        private ToolConfig commandExec = new ToolConfig();
+        @JsonProperty("read")
+        private ToolConfig read = new ToolConfig();
 
-        @JsonProperty("codeExecutor")
-        private ToolConfig codeExecutor = new ToolConfig();
+        @JsonProperty("write")
+        private ToolConfig write = new ToolConfig();
 
-        @JsonProperty("search")
-        private ToolConfig search = new ToolConfig();
+        @JsonProperty("edit")
+        private ToolConfig edit = new ToolConfig();
 
-        // Getters and Setters
-        public ToolConfig getFileManager() {
-            if (fileManager == null) {
-                fileManager = new ToolConfig(); // Ensure fileManager is not null
-            }
-            return fileManager;
+        @JsonProperty("glob")
+        private ToolConfig glob = new ToolConfig();
+
+        public ToolConfig getBash() {
+            if (bash == null) bash = new ToolConfig();
+            return bash;
         }
 
-        public void setFileManager(ToolConfig fileManager) {
-            this.fileManager = fileManager;
+        public void setBash(ToolConfig bash) {
+            this.bash = bash;
         }
 
-        public ToolConfig getCommandExec() {
-            if (commandExec == null) {
-                commandExec = new ToolConfig();
-            }
-            return commandExec;
+        public ToolConfig getRead() {
+            if (read == null) read = new ToolConfig();
+            return read;
         }
 
-        public void setCommandExec(ToolConfig commandExec) {
-            this.commandExec = commandExec;
+        public void setRead(ToolConfig read) {
+            this.read = read;
         }
 
-        public ToolConfig getCodeExecutor() {
-            if (codeExecutor == null) {
-                codeExecutor = new ToolConfig();
-            }
-            return codeExecutor;
+        public ToolConfig getWrite() {
+            if (write == null) write = new ToolConfig();
+            return write;
         }
 
-        public void setCodeExecutor(ToolConfig codeExecutor) {
-            this.codeExecutor = codeExecutor;
+        public void setWrite(ToolConfig write) {
+            this.write = write;
         }
 
-        public ToolConfig getSearch() {
-            if (search == null) {
-                search = new ToolConfig();
-            }
-            return search;
+        public ToolConfig getEdit() {
+            if (edit == null) edit = new ToolConfig();
+            return edit;
         }
 
-        public void setSearch(ToolConfig search) {
-            this.search = search;
+        public void setEdit(ToolConfig edit) {
+            this.edit = edit;
+        }
+
+        public ToolConfig getGlob() {
+            if (glob == null) glob = new ToolConfig();
+            return glob;
+        }
+
+        public void setGlob(ToolConfig glob) {
+            this.glob = glob;
         }
     }
 
@@ -282,7 +285,10 @@ public class AppConfig {
     @Data
     public static class AIConfig {
         @JsonProperty("autoProcessToolResults")
-        private boolean autoProcessToolResults = false; // 默认false：工具执行后直接显示结果，不再反馈给AI
+        private boolean autoProcessToolResults = true; // 默认true：工具执行后把结果反馈给AI，形成 agentic 循环
+
+        @JsonProperty("maxToolIterations")
+        private int maxToolIterations = 10; // agentic 循环单次用户输入内的最大工具轮次上限
 
         public boolean isAutoProcessToolResults() {
             return autoProcessToolResults;
@@ -290,6 +296,14 @@ public class AppConfig {
 
         public void setAutoProcessToolResults(boolean autoProcessToolResults) {
             this.autoProcessToolResults = autoProcessToolResults;
+        }
+
+        public int getMaxToolIterations() {
+            return maxToolIterations;
+        }
+
+        public void setMaxToolIterations(int maxToolIterations) {
+            this.maxToolIterations = maxToolIterations;
         }
     }
 }

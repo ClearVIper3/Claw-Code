@@ -4,7 +4,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.thoughtcoding.mcp.model.MCPTool;
 import com.thoughtcoding.model.ToolResult;
 import com.thoughtcoding.tools.BaseTool; // 使用你的 BaseTool 基类
-import com.thoughtcoding.tools.ToolRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -19,12 +18,6 @@ public class MCPService {
     private static final Logger log = LoggerFactory.getLogger(MCPService.class);
     private final Map<String, MCPClient> connectedServers = new ConcurrentHashMap<>();
     private final Map<String, BaseTool> mcpTools = new ConcurrentHashMap<>(); // 改为 BaseTool
-    private final ToolRegistry toolRegistry;
-
-    public MCPService(ToolRegistry toolRegistry) {
-        this.toolRegistry = toolRegistry;
-    }
-    // 添加 clients 映射
     private final Map<String, MCPClient> clients = new ConcurrentHashMap<>();
 
 
@@ -89,16 +82,6 @@ public class MCPService {
                     }
                 }
 
-                @Override
-                public String getCategory() {
-                    return "MCP-" + serverName;
-                }
-
-                @Override
-                public boolean isEnabled() {
-                    return true;
-                }
-
                 // 🔥 关键修复：暴露inputSchema给系统提示词（重写BaseTool方法）
                 public Object getInputSchema() {
                     return mcpTool.getInputSchema();
@@ -150,32 +133,9 @@ public class MCPService {
         }
     }
 
-
-
-
-
-    private List<BaseTool> convertTools(List<MCPTool> mcpTools, MCPClient client) {
-        List<BaseTool> result = new ArrayList<>();
-        for (MCPTool mcpTool : mcpTools) {
-            result.add(new MCPToolAdapter(mcpTool, client));
-        }
-        return result;
-    }
-
     public void disconnectServer(String serverName) {
         MCPClient client = connectedServers.remove(serverName);
         if (client != null) {
-            // 移除相关工具
-            mcpTools.entrySet().removeIf(entry -> {
-                boolean shouldRemove = entry.getKey().startsWith("mcp:" + serverName + "/");
-                if (shouldRemove) {
-                    // 根据你的 ToolRegistry 实现，可能需要不同的取消注册方法
-                    // 如果没有 unregister 方法，可能需要其他方式处理
-                    log.debug("移除MCP工具: {}", entry.getKey());
-                }
-                return shouldRemove;
-            });
-
             client.disconnect();
             log.debug("已断开MCP服务器: {}", serverName);
         }
@@ -185,22 +145,8 @@ public class MCPService {
         return new ArrayList<>(connectedServers.keySet());
     }
 
-    public List<BaseTool> getServerTools(String serverName) {
-        List<BaseTool> tools = new ArrayList<>();
-        mcpTools.forEach((name, tool) -> {
-            if (name.startsWith("mcp:" + serverName + "/")) {
-                tools.add(tool);
-            }
-        });
-        return tools;
-    }
-
     public Map<String, BaseTool> getMCPTools() {
         return new HashMap<>(mcpTools);
-    }
-
-    public List<String> getAvailableToolNames() {
-        return new ArrayList<>(mcpTools.keySet());
     }
 
     public void shutdown() {

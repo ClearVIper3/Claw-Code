@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.thoughtcoding.model.ChatMessage;
 import com.thoughtcoding.model.SessionData;
+import com.thoughtcoding.model.ToolCallRef;
 
 
 import java.io.File;
@@ -38,6 +39,16 @@ public class SessionService {
         public String role;
         public String content;
         public String timestamp;
+        // 🔥 原生工具调用字段（可空，旧会话没有）
+        public String toolCallId;
+        public String toolName;
+        public List<ToolCallDTO> toolCalls;
+    }
+
+    private static class ToolCallDTO {
+        public String id;
+        public String name;
+        public String arguments;
     }
 
     public SessionService() {
@@ -74,6 +85,20 @@ public class SessionService {
                         dto.role = msg.getRole();
                         dto.content = msg.getContent();
                         dto.timestamp = msg.getTimestamp() != null ? String.valueOf(msg.getTimestamp()) : Instant.now().toString();
+                        // 🔥 原生工具字段往返
+                        dto.toolCallId = msg.getToolCallId();
+                        dto.toolName = msg.getToolName();
+                        if (msg.getToolCalls() != null && !msg.getToolCalls().isEmpty()) {
+                            dto.toolCalls = msg.getToolCalls().stream()
+                                    .map(ref -> {
+                                        ToolCallDTO t = new ToolCallDTO();
+                                        t.id = ref.getId();
+                                        t.name = ref.getName();
+                                        t.arguments = ref.getArguments();
+                                        return t;
+                                    })
+                                    .collect(Collectors.toList());
+                        }
                         return dto;
                     })
                     .collect(Collectors.toList());
@@ -113,17 +138,22 @@ public class SessionService {
             }
 
             // 转换为 ChatMessage 列表 - 添加过滤
-            return messagesData.stream()
+            List<ChatMessage> loaded = messagesData.stream()
                     .map(messageMap -> {
                         String role = (String) messageMap.get("role");
                         String content = (String) messageMap.get("content");
+                        String toolCallId = (String) messageMap.get("toolCallId");
+                        String toolName = (String) messageMap.get("toolName");
+                        Object toolCallsObj = messageMap.get("toolCalls");
+                        boolean hasToolCalls = toolCallsObj instanceof List && !((List<?>) toolCallsObj).isEmpty();
+                        boolean isTool = "tool".equals(role);
 
-                        // 🚨 关键修复：过滤空内容
-                        if (content == null || content.trim().isEmpty()) {
+                        // 🚨 过滤空内容 —— 但豁免工具消息：role=tool 或携带 toolCalls 的 assistant 消息即使正文为空也必须保留
+                        if ((content == null || content.trim().isEmpty()) && !isTool && !hasToolCalls) {
                             return null;
                         }
 
-                        ChatMessage msg = new ChatMessage(role, content, sessionId);
+                        ChatMessage msg = new ChatMessage(role, content == null ? "" : content, sessionId);
 
                         // 设置非 final 字段
                         Object timestamp = messageMap.get("timestamp");
@@ -131,14 +161,76 @@ public class SessionService {
                             msg.setTimestamp(timestamp.toString());
                         }
 
+                        // 🔥 重建工具字段
+                        msg.setToolCallId(toolCallId);
+                        msg.setToolName(toolName);
+                        if (hasToolCalls) {
+                            List<ToolCallRef> refs = new ArrayList<>();
+                            for (Object o : (List<?>) toolCallsObj) {
+                                if (o instanceof Map) {
+                                    Map<?, ?> m = (Map<?, ?>) o;
+                                    refs.add(new ToolCallRef(
+                                            (String) m.get("id"),
+                                            (String) m.get("name"),
+                                            (String) m.get("arguments")));
+                                }
+                            }
+                            msg.setToolCalls(refs);
+                        }
+
                         return msg;
                     })
                     .filter(Objects::nonNull) // 过滤掉 null
                     .collect(Collectors.toList());
 
+            // 🔥 清理孤立的工具调用/结果，避免加载残缺会话后触发模型 400
+            return sanitizeToolPairs(loaded);
+
         } catch (Exception e) {
             throw new RuntimeException("Failed to load session from disk: " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * 🔥 清理工具调用/结果的配对，防止加载残缺会话后违反 "assistant 工具调用必须紧跟同 id 的 tool 结果" 契约：
+     *  - 丢弃没有对应 assistant 工具调用的孤立 role=tool 结果；
+     *  - assistant 消息里剥掉没有对应结果的 toolCalls（若剥空则退化为普通 assistant 消息）。
+     */
+    private List<ChatMessage> sanitizeToolPairs(List<ChatMessage> history) {
+        if (history == null || history.isEmpty()) {
+            return history;
+        }
+
+        Set<String> resultIds = new HashSet<>();   // 出现过的 tool 结果 id
+        Set<String> callIds = new HashSet<>();      // assistant 发起的工具调用 id
+        for (ChatMessage m : history) {
+            if (m.isToolMessage() && m.getToolCallId() != null) {
+                resultIds.add(m.getToolCallId());
+            }
+            if (m.getToolCalls() != null) {
+                for (ToolCallRef r : m.getToolCalls()) {
+                    if (r.getId() != null) callIds.add(r.getId());
+                }
+            }
+        }
+
+        List<ChatMessage> result = new ArrayList<>(history.size());
+        for (ChatMessage m : history) {
+            if (m.isToolMessage()) {
+                // 无配对 assistant 工具调用 → 丢弃
+                if (m.getToolCallId() == null || !callIds.contains(m.getToolCallId())) {
+                    continue;
+                }
+            } else if (m.getToolCalls() != null && !m.getToolCalls().isEmpty()) {
+                // 只保留有对应结果的工具调用
+                List<ToolCallRef> kept = m.getToolCalls().stream()
+                        .filter(r -> r.getId() != null && resultIds.contains(r.getId()))
+                        .collect(Collectors.toList());
+                m.setToolCalls(kept.isEmpty() ? null : kept);
+            }
+            result.add(m);
+        }
+        return result;
     }
 
     public boolean deleteSession(String sessionId) {
