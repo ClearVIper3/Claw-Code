@@ -19,7 +19,7 @@ import java.util.Map;
 public class EditTool extends BaseTool {
 
     public EditTool(AppConfig appConfig) {
-        super("edit", "对文件做精确字符串替换：把 old_string 换成 new_string。old_string 必须在文件中唯一，否则需设 replace_all=true。参数：path、old_string、new_string（必填）、replace_all（可选）。");
+        super("edit", "对文件做精确字符串替换。old_string 必须是文件中的原文（不是 Read 工具输出的带行号的格式），将 old_string 替换为 new_string。old_string 必须在文件中唯一，否则需设 replace_all=true。参数：path、old_string、new_string（必填）、replace_all（可选）。");
     }
 
     @Override
@@ -62,7 +62,7 @@ public class EditTool extends BaseTool {
                 return error("文件不存在: " + p, System.currentTimeMillis() - startTime);
             }
 
-            String content = Files.readString(path);
+            String content = Files.readString(path).replace("\r\n", "\n");
             int count = countOccurrences(content, oldString);
             if (count == 0) {
                 return error("未找到 old_string，未做修改", System.currentTimeMillis() - startTime);
