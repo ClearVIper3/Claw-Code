@@ -120,7 +120,7 @@ public class AgentLoop {
                             call.getParameters(),
                             true);
                     ToolExecutionConfirmation.ActionType action = confirmation.askConfirmationWithOptions(exec);
-                    if (action == ToolExecutionConfirmation.ActionType.DISCARD) {
+                    if (action == ToolExecutionConfirmation.ActionType.NO) {
                         context.getUi().displayWarning("⏭️  已取消：" + describeTool(call));
                         history.add(ChatMessage.toolResult(call.getProviderCallId(), call.getToolName(),
                                 "用户拒绝执行该工具。"));
