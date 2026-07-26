@@ -10,8 +10,8 @@ import java.util.Map;
  * 工具执行的唯一收口。
  *
  * 所有工具执行 —— 原生 function calling、MCP 工具、以及自动编译/运行 —— 都必须经过
- * {@link #dispatch(ToolCall)}。这样未来的 workspace 沙箱只需在此一处插桩，即可以结构化的
- * (name, args) 看到 100% 的写/执行操作。
+ * {@link #dispatch(ToolCall)}。workspace 沙箱校验已下沉到各工具内部
+ *（{@link Sandbox#safePath}），由 WriteTool/ReadTool/EditTool 各自调用。
  */
 public class ToolDispatcher {
 
@@ -34,11 +34,6 @@ public class ToolDispatcher {
         }
 
         String argsJson = toJson(call.getParameters());
-
-        // 【沙箱插桩点】——下一任务在此插入 workspace 边界检查：
-        //   WriteGuard.check(call.getToolName(), call.getParameters())
-        // 对 write/edit 的 path、bash 的 command 做越界判定，
-        // 越界时直接 return ToolResult.error(...) 不进入 tool.execute。
 
         return tool.execute(argsJson);
     }

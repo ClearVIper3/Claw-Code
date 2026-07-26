@@ -25,7 +25,7 @@ public class AgentLoop {
     private final String sessionId;
     private final String modelName;
     private final ToolExecutionConfirmation confirmation;  // 交互式确认组件
-    private final ToolDispatcher toolDispatcher;           // 工具执行唯一收口（沙箱插桩点）
+    private final ToolDispatcher toolDispatcher;
 
     // 缓存本轮模型请求的工具调用（原生路径一轮可能有多个）
     private final List<ToolCall> pendingToolCalls = new ArrayList<>();
