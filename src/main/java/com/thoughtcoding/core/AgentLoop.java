@@ -96,6 +96,9 @@ public class AgentLoop {
             pendingToolCalls.clear();
             // 一轮模型响应（无新用户输入；用户消息与历史已在 history 中）
             context.getAiService().streamingChat(null, history, modelName);
+            // 空一行，避免与后续工具确认/结果挤在一起
+            context.getUi().getTerminal().writer().println();
+            context.getUi().getTerminal().flush();
 
             if (pendingToolCalls.isEmpty()) {
                 break; // 模型只产出文本 → 自然终止
@@ -132,6 +135,8 @@ public class AgentLoop {
                 // 执行并把结果按 id 配对写回 history
                 ToolResult result = toolDispatcher.dispatch(call);
                 displayNativeToolResult(call, result);
+                // 工具结果显示后空一行，避免与下一轮 AI 流式文本挤在同一区域
+                context.getUi().getTerminal().writer().println();
                 String resultText = result.isSuccess()
                         ? (result.getOutput() == null || result.getOutput().isBlank()
                             ? "执行成功（无输出）。" : result.getOutput())

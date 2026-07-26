@@ -171,7 +171,6 @@ public class LangChainService implements AIService {
                             history.add(new ChatMessage("assistant", text));
                         }
                     }
-                    System.out.println();
                 } finally {
                     isGenerating = false;
                     shouldStop = false;
