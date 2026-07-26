@@ -2,6 +2,7 @@ package com.thoughtcoding.tool.tools;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.thoughtcoding.config.AppConfig;
+import com.thoughtcoding.exception.WorkspaceSecurityException;
 import com.thoughtcoding.model.ToolResult;
 import com.thoughtcoding.tool.BaseTool;
 import com.thoughtcoding.tool.Sandbox;
@@ -84,6 +85,8 @@ public class EditTool extends BaseTool {
             return success("已在 " + path + " 替换 " + (replaceAll ? count : 1) + " 处",
                     System.currentTimeMillis() - startTime);
 
+        } catch (WorkspaceSecurityException e) {
+            return error(e.getMessage(), System.currentTimeMillis() - startTime);
         } catch (IOException e) {
             return error("编辑失败: " + e.getMessage(), System.currentTimeMillis() - startTime);
         } catch (Exception e) {

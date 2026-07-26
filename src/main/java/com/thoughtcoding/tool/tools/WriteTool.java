@@ -2,6 +2,7 @@ package com.thoughtcoding.tool.tools;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.thoughtcoding.config.AppConfig;
+import com.thoughtcoding.exception.WorkspaceSecurityException;
 import com.thoughtcoding.model.ToolResult;
 import com.thoughtcoding.tool.BaseTool;
 import com.thoughtcoding.tool.Sandbox;
@@ -58,6 +59,8 @@ public class WriteTool extends BaseTool {
             return success("已写入: " + path + " (" + content.length() + " 字符)",
                     System.currentTimeMillis() - startTime);
 
+        } catch (WorkspaceSecurityException e) {
+            return error(e.getMessage(), System.currentTimeMillis() - startTime);
         } catch (IOException e) {
             return error("写入失败: " + e.getMessage(), System.currentTimeMillis() - startTime);
         } catch (Exception e) {

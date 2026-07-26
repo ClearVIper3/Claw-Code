@@ -1,5 +1,7 @@
 package com.thoughtcoding.tool;
 
+import com.thoughtcoding.exception.WorkspaceSecurityException;
+
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
@@ -57,8 +59,9 @@ public final class PermissionGate {
                 return PermissionResult.warn(
                     "⚠️ 路径在 workspace 之外: " + resolved);
             }
-        } catch (Exception ignored) {
-            // 解析失败不报 warning
+        } catch (WorkspaceSecurityException e) {
+            // 路径为空/非法 → 交给工具侧报具体错误，权限不做拦截
+            return PermissionResult.ALLOW;
         }
         return PermissionResult.ALLOW;
     }

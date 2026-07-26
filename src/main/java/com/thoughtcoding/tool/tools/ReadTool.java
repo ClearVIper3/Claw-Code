@@ -2,6 +2,7 @@ package com.thoughtcoding.tool.tools;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.thoughtcoding.config.AppConfig;
+import com.thoughtcoding.exception.WorkspaceSecurityException;
 import com.thoughtcoding.model.ToolResult;
 import com.thoughtcoding.tool.BaseTool;
 import com.thoughtcoding.tool.Sandbox;
@@ -92,6 +93,8 @@ public class ReadTool extends BaseTool {
             }
             return success(sb.toString(), System.currentTimeMillis() - startTime);
 
+        } catch (WorkspaceSecurityException e) {
+            return error(e.getMessage(), System.currentTimeMillis() - startTime);
         } catch (IOException e) {
             return error("读取失败: " + e.getMessage(), System.currentTimeMillis() - startTime);
         } catch (Exception e) {
