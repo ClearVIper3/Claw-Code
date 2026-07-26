@@ -10,8 +10,8 @@ import java.util.Map;
  * 工具执行的唯一收口。
  *
  * 所有工具执行 —— 原生 function calling、MCP 工具、以及自动编译/运行 —— 都必须经过
- * {@link #dispatch(ToolCall)}。workspace 沙箱校验已下沉到各工具内部
- *（{@link Sandbox#safePath}），由 WriteTool/ReadTool/EditTool 各自调用。
+ * {@link #dispatch(ToolCall)}。权限检查由 AgentLoop 调用 {@link PermissionGate} 完成，
+ * 工具内部通过 {@link Sandbox#resolve} 只做路径解析，不做权限决策。
  */
 public class ToolDispatcher {
 
@@ -23,7 +23,7 @@ public class ToolDispatcher {
     }
 
     /**
-     * 执行一个工具调用：查表 → 序列化参数 →（沙箱检查）→ 执行。
+     * 执行一个工具调用：查表 → 序列化参数 → 执行。
      */
     public ToolResult dispatch(ToolCall call) {
         long start = System.currentTimeMillis();

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.thoughtcoding.config.AppConfig;
 import com.thoughtcoding.model.ToolResult;
 import com.thoughtcoding.tool.BaseTool;
+import com.thoughtcoding.tool.Sandbox;
 import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
 
 import java.io.IOException;
@@ -13,7 +14,7 @@ import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.PathMatcher;
-import java.nio.file.Paths;
+
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
@@ -69,7 +70,7 @@ public class GlobTool extends BaseTool {
             Object pathObj = params.get("path");
             String basePathStr = (pathObj == null || pathObj.toString().trim().isEmpty())
                     ? "." : pathObj.toString();
-            Path base = Paths.get(expandUserHome(basePathStr)).toAbsolutePath().normalize();
+            Path base = Sandbox.resolve(basePathStr);
 
             if (!Files.exists(base) || !Files.isDirectory(base)) {
                 return error("目录不存在: " + basePathStr, System.currentTimeMillis() - startTime);

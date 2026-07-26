@@ -6,14 +6,21 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 
 /**
- * 通用沙箱 —— 校验文件路径必须在 workspace 范围内。
+ * 通用沙箱 —— 路径解析工具。
  *
  * <pre>
- * // 工具内用法（替代原来的 Paths.get(expandUserHome(...)).toAbsolutePath()）：
- * Path path = Sandbox.safePath(p.toString());
+ * // 工具内用法（只解析，不做权限决策）：
+ * Path path = Sandbox.resolve(p.toString());
+ *
+ * // PermissionGate 内用法（组合判断）：
+ * Path resolved = Sandbox.resolve(rawPath);
+ * if (!Sandbox.isWithinWorkspace(resolved)) {
+ *     return PermissionResult.warn("⚠️ 路径在 workspace 之外");
+ * }
  * </pre>
  *
- * 越界时抛出 {@link WorkspaceSecurityException}，由工具的现有 {@code catch (Exception e)} 转为 ToolResult.error。
+ * 权限决策由 PermissionGate 负责，AgentLoop 通过确认框交给用户选择，
+ * 默认 ask 而不是 deny。
  */
 public final class Sandbox {
 
@@ -49,57 +56,43 @@ public final class Sandbox {
         return r;
     }
 
-    // ── 核心方法 ──
+    // ── 路径解析（不做权限决策）──
 
     /**
-     * 校验并返回安全路径。
+     * 解析原始路径为绝对路径（展开 ~、相对于 workspace root 解析、normalize）。
+     * 不做越界检查——权限决策由上层 AgentLoop 负责。
      *
      * @param rawPath 用户输入的原始路径（支持 ~，相对/绝对均可）
      * @return 已解析的绝对路径
-     * @throws WorkspaceSecurityException 路径在 workspace 之外
      */
-    public static Path safePath(String rawPath) {
+    public static Path resolve(String rawPath) {
         if (rawPath == null || rawPath.isBlank()) {
             throw new WorkspaceSecurityException("路径不能为空");
         }
 
         Path root = root();
         String expanded = expandUserHome(rawPath.trim());
-        Path target = root.resolve(expanded).normalize();
-
-        try {
-            Path real = target.toRealPath();
-            if (!real.startsWith(root)) {
-                throw new WorkspaceSecurityException(
-                        "路径越界: '" + rawPath + "' → " + real + "（workspace: " + root + "）");
-            }
-            return real;
-        } catch (WorkspaceSecurityException e) {
-            throw e;
-        } catch (Exception fileNotExist) {
-            return validateParent(rawPath, target, root);
-        }
+        return root.resolve(expanded).normalize();
     }
 
-    /** 文件不存在时，退而校验父目录。 */
-    private static Path validateParent(String rawPath, Path target, Path root) {
-        Path parent = target.getParent();
-        if (parent == null) {
-            throw new WorkspaceSecurityException(
-                    "路径越界: '" + rawPath + "' 解析为根目录（workspace: " + root + "）");
-        }
+    /**
+     * 判断给定路径是否在 workspace 范围内。
+     */
+    public static boolean isWithinWorkspace(Path path) {
+        if (path == null) return false;
+        Path root = root();
         try {
-            Path realParent = parent.toRealPath();
-            if (!realParent.startsWith(root)) {
-                throw new WorkspaceSecurityException(
-                        "路径越界: '" + rawPath + "' → 父目录 " + realParent + "（workspace: " + root + "）");
-            }
-        } catch (WorkspaceSecurityException e) {
-            throw e;
+            return path.toRealPath().startsWith(root);
         } catch (Exception e) {
-            throw new WorkspaceSecurityException("无法解析路径: '" + rawPath + "' — " + e.getMessage());
+            // 文件不存在时检查父目录
+            Path parent = path.getParent();
+            if (parent == null) return false;
+            try {
+                return parent.toRealPath().startsWith(root);
+            } catch (Exception ex) {
+                return false;
+            }
         }
-        return target;
     }
 
     private static String expandUserHome(String path) {

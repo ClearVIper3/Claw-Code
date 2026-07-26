@@ -4,7 +4,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.thoughtcoding.config.AppConfig;
 import com.thoughtcoding.model.ToolResult;
 import com.thoughtcoding.tool.BaseTool;
-import com.thoughtcoding.exception.WorkspaceSecurityException;
 import com.thoughtcoding.tool.Sandbox;
 import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
 
@@ -58,7 +57,7 @@ public class EditTool extends BaseTool {
             boolean replaceAll = Boolean.TRUE.equals(params.get("replace_all"))
                     || "true".equalsIgnoreCase(String.valueOf(params.get("replace_all")));
 
-            Path path = Sandbox.safePath(p.toString());
+            Path path = Sandbox.resolve(p.toString());
             if (!Files.exists(path) || Files.isDirectory(path)) {
                 return error("文件不存在: " + p, System.currentTimeMillis() - startTime);
             }
@@ -85,8 +84,6 @@ public class EditTool extends BaseTool {
             return success("已在 " + path + " 替换 " + (replaceAll ? count : 1) + " 处",
                     System.currentTimeMillis() - startTime);
 
-        } catch (WorkspaceSecurityException e) {
-            return error(e.getMessage(), System.currentTimeMillis() - startTime);
         } catch (IOException e) {
             return error("编辑失败: " + e.getMessage(), System.currentTimeMillis() - startTime);
         } catch (Exception e) {

@@ -4,7 +4,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.thoughtcoding.config.AppConfig;
 import com.thoughtcoding.model.ToolResult;
 import com.thoughtcoding.tool.BaseTool;
-import com.thoughtcoding.exception.WorkspaceSecurityException;
 import com.thoughtcoding.tool.Sandbox;
 import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
 
@@ -55,7 +54,7 @@ public class ReadTool extends BaseTool {
             if (p == null) {
                 return error("read 需要 'path' 字段", System.currentTimeMillis() - startTime);
             }
-            Path path = Sandbox.safePath(p.toString());
+            Path path = Sandbox.resolve(p.toString());
 
             if (!Files.exists(path)) {
                 return error("文件不存在: " + p, System.currentTimeMillis() - startTime);
@@ -93,8 +92,6 @@ public class ReadTool extends BaseTool {
             }
             return success(sb.toString(), System.currentTimeMillis() - startTime);
 
-        } catch (WorkspaceSecurityException e) {
-            return error(e.getMessage(), System.currentTimeMillis() - startTime);
         } catch (IOException e) {
             return error("读取失败: " + e.getMessage(), System.currentTimeMillis() - startTime);
         } catch (Exception e) {

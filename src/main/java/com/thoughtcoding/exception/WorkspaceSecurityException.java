@@ -1,10 +1,9 @@
 package com.thoughtcoding.exception;
 
 /**
- * 沙箱路径越界异常。
+ * 沙箱路径异常。
  *
- * 当工具尝试访问 workspace 之外的路径时，由 {@link com.thoughtcoding.tool.Sandbox#safePath}
- * 抛出。工具的 execute() 方法在 catch 块中捕获此异常并返回 ToolResult.error。
+ * 由 {@link com.thoughtcoding.tool.Sandbox#resolve} 在路径为空白时抛出。
  */
 public class WorkspaceSecurityException extends RuntimeException {
 

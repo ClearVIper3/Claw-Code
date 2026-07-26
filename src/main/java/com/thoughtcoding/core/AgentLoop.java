@@ -6,7 +6,8 @@ import com.thoughtcoding.model.ToolCall;
 import com.thoughtcoding.model.ToolExecution;
 import com.thoughtcoding.model.ToolResult;
 import com.thoughtcoding.service.PerformanceMonitor;
-import com.thoughtcoding.tool.BaseTool;
+import com.thoughtcoding.tool.PermissionGate;
+import com.thoughtcoding.tool.PermissionResult;
 import com.thoughtcoding.tool.ToolDispatcher;
 
 import java.util.ArrayList;
@@ -16,7 +17,7 @@ import java.util.List;
  * AI 交互的核心循环。
  *
  * 基于 langchain4j 原生 function calling 的多轮 agentic 循环：
- * 用户输入 → 模型响应（可能请求工具）→ 执行工具（仅写/执行类确认）→ 结果按 id 配对回喂 →
+ * 用户输入 → 模型响应（可能请求工具）→ 权限检查 → 执行工具（写/执行类 + 越界只读类确认）→ 结果按 id 配对回喂 →
  * 无新输入再问模型，直到模型不再请求工具、用户取消、或达到 maxToolIterations。
  */
 public class AgentLoop {
@@ -115,8 +116,19 @@ public class AgentLoop {
                     continue;
                 }
 
-                // 仅写/执行类需要确认（除非处于自动批准模式）
-                if (requiresConfirmation(call) && !confirmation.isAutoApproveMode()) {
+                // ── 权限决策：DENY → 拒绝 | WARN → 确认 | ALLOW → 放行 ──
+                PermissionResult perm = PermissionGate.check(
+                    call.getToolName(), call.getParameters());
+
+                if (perm.type() == PermissionResult.Type.DENY) {
+                    context.getUi().displayError(perm.message());
+                    history.add(ChatMessage.toolResult(
+                        call.getProviderCallId(), call.getToolName(), perm.message()));
+                    continue;
+                }
+
+                if (perm.type() == PermissionResult.Type.WARN
+                    && !confirmation.isAutoApproveMode()) {
                     ToolExecution exec = new ToolExecution(
                             call.getToolName(),
                             call.getDescription() != null ? call.getDescription() : "执行工具操作",
@@ -157,17 +169,6 @@ public class AgentLoop {
                 break;
             }
         }
-    }
-
-    /** 写/执行类工具需要确认；只读工具（由工具自身 isReadOnly() 声明）静默放行。 */
-    private boolean requiresConfirmation(ToolCall call) {
-        String name = call.getToolName();
-        if (name == null) {
-            return true;
-        }
-        BaseTool tool = context.getToolRegistry().getTool(name);
-        // 未知/MCP 工具（未声明只读）默认需确认；工具自身声明 isReadOnly 则静默放行。
-        return tool == null || !tool.isReadOnly();
     }
 
     private String describeTool(ToolCall call) {
