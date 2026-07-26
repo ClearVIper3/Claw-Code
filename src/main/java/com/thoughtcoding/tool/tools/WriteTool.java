@@ -1,14 +1,16 @@
-package com.thoughtcoding.tools;
+package com.thoughtcoding.tool.tools;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.thoughtcoding.config.AppConfig;
 import com.thoughtcoding.model.ToolResult;
+import com.thoughtcoding.tool.BaseTool;
+import com.thoughtcoding.exception.WorkspaceSecurityException;
+import com.thoughtcoding.tool.Sandbox;
 import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.Map;
 
 /**
@@ -48,7 +50,7 @@ public class WriteTool extends BaseTool {
             }
             String content = c.toString();
 
-            Path path = Paths.get(expandUserHome(p.toString())).toAbsolutePath();
+            Path path = Sandbox.safePath(p.toString());
             if (path.getParent() != null) {
                 Files.createDirectories(path.getParent());
             }
@@ -57,6 +59,8 @@ public class WriteTool extends BaseTool {
             return success("已写入: " + path + " (" + content.length() + " 字符)",
                     System.currentTimeMillis() - startTime);
 
+        } catch (WorkspaceSecurityException e) {
+            return error(e.getMessage(), System.currentTimeMillis() - startTime);
         } catch (IOException e) {
             return error("写入失败: " + e.getMessage(), System.currentTimeMillis() - startTime);
         } catch (Exception e) {

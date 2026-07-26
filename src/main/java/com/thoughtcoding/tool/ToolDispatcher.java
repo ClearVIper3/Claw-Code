@@ -1,4 +1,4 @@
-package com.thoughtcoding.tools;
+package com.thoughtcoding.tool;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.thoughtcoding.model.ToolCall;

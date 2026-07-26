@@ -1,4 +1,4 @@
-package com.thoughtcoding.tools;
+package com.thoughtcoding.tool;
 
 import com.thoughtcoding.config.AppConfig;
 

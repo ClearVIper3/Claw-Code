@@ -3,8 +3,7 @@ package com.thoughtcoding.mcp;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.thoughtcoding.mcp.model.MCPTool;
 import com.thoughtcoding.model.ToolResult;
-import com.thoughtcoding.tools.BaseTool; // 使用你的 BaseTool 基类
-import lombok.extern.slf4j.Slf4j;
+import com.thoughtcoding.tool.BaseTool; // 使用你的 BaseTool 基类
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

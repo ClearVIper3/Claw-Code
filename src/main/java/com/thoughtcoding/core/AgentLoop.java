@@ -6,8 +6,8 @@ import com.thoughtcoding.model.ToolCall;
 import com.thoughtcoding.model.ToolExecution;
 import com.thoughtcoding.model.ToolResult;
 import com.thoughtcoding.service.PerformanceMonitor;
-import com.thoughtcoding.tools.BaseTool;
-import com.thoughtcoding.tools.ToolDispatcher;
+import com.thoughtcoding.tool.BaseTool;
+import com.thoughtcoding.tool.ToolDispatcher;
 
 import java.util.ArrayList;
 import java.util.List;

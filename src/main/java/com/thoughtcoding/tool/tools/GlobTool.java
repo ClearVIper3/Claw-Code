@@ -1,8 +1,9 @@
-package com.thoughtcoding.tools;
+package com.thoughtcoding.tool.tools;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.thoughtcoding.config.AppConfig;
 import com.thoughtcoding.model.ToolResult;
+import com.thoughtcoding.tool.BaseTool;
 import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
 
 import java.io.IOException;
