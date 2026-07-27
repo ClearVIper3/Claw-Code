@@ -52,7 +52,7 @@ public class HookRegistry {
     public HookResult fire(HookContext context) {
         List<Entry> chain = hooks.getOrDefault(context.getType(), Collections.emptyList());
         if (chain.isEmpty()) {
-            return HookResult.PROCEED; // 空链：不打印、不做任何事
+            return HookResult.proceed(); // 空链：不打印、不做任何事
         }
 
         // 打印本时机注册的动作：Hook(a、b、c)，走项目 UI 而非裸 System.out
@@ -81,7 +81,7 @@ public class HookRegistry {
                 return result; // 阻断 / 强制续跑 → 提前终止串行链
             }
         }
-        return HookResult.PROCEED;
+        return HookResult.proceed();
     }
 
     /** 某时机已注册的动作数量（便于调试/测试）。 */
