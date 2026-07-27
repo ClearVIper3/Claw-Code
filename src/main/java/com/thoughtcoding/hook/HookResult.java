@@ -20,7 +20,9 @@ public record HookResult(Decision decision, String message) {
         CONTINUE_LOOP
     }
 
-    public static final HookResult PROCEED = new HookResult(Decision.PROCEED, null);
+    public static HookResult proceed() {
+        return new HookResult(Decision.PROCEED, null);
+    }
 
     public static HookResult block(String message) {
         return new HookResult(Decision.BLOCK, message);
