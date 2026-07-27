@@ -1,6 +1,9 @@
 package com.thoughtcoding.core;
 
 import com.thoughtcoding.config.AppConfig;
+import com.thoughtcoding.hook.HookContext;
+import com.thoughtcoding.hook.HookRegistry;
+import com.thoughtcoding.hook.HookResult;
 import com.thoughtcoding.model.ChatMessage;
 import com.thoughtcoding.model.ToolCall;
 import com.thoughtcoding.model.ToolExecution;
@@ -27,6 +30,7 @@ public class AgentLoop {
     private final String modelName;
     private final ToolExecutionConfirmation confirmation;  // 交互式确认组件
     private final ToolDispatcher toolDispatcher;
+    private final HookRegistry hookRegistry;               // 基于注册表的 Hook 系统
 
     // 缓存本轮模型请求的工具调用（原生路径一轮可能有多个）
     private final List<ToolCall> pendingToolCalls = new ArrayList<>();
@@ -42,6 +46,9 @@ public class AgentLoop {
             context.getUi().getLineReader()
         );
         this.toolDispatcher = new ToolDispatcher(context.getToolRegistry());
+
+        // 一开始先注册四种 hook 时机（动作由业务方按需 register 追加）
+        this.hookRegistry = new HookRegistry();
 
         // 设置消息和工具调用处理器
         context.getAiService().setMessageHandler(this::handleMessage);
@@ -60,6 +67,11 @@ public class AgentLoop {
 
         try {
             pendingToolCalls.clear();
+
+            // ── Hook: UserPromptSubmit（进入 LLM 前）—— BLOCK 则跳过本轮 ──
+            HookResult promptResult = hookRegistry.fire(
+                    HookContext.forUserPrompt(context, history, input));
+
             history.add(new ChatMessage("user", input));
 
             // 原生 function calling：多轮 agentic 循环
@@ -102,6 +114,8 @@ public class AgentLoop {
             context.getUi().getTerminal().flush();
 
             if (pendingToolCalls.isEmpty()) {
+                // ── Hook: Stop（循环即将退出）──
+                hookRegistry.fire(HookContext.forStop(context, history));
                 break; // 模型只产出文本 → 自然终止
             }
 
@@ -115,6 +129,10 @@ public class AgentLoop {
                             "用户已取消后续工具执行。"));
                     continue;
                 }
+
+                // ── Hook: PreToolUse（工具执行前）—— BLOCK 则跳过该工具 ──
+                HookResult preResult = hookRegistry.fire(
+                        HookContext.forPreTool(context, history, call));
 
                 // ── 权限决策：DENY → 拒绝 | WARN → 确认 | ALLOW → 放行 ──
                 PermissionResult perm = PermissionGate.check(
@@ -146,6 +164,10 @@ public class AgentLoop {
 
                 // 执行并把结果按 id 配对写回 history
                 ToolResult result = toolDispatcher.dispatch(call);
+
+                // ── Hook: PostToolUse（工具执行后）──
+                hookRegistry.fire(HookContext.forPostTool(context, history, call, result));
+
                 displayNativeToolResult(call, result);
                 // 工具结果显示后空一行，避免与下一轮 AI 流式文本挤在同一区域
                 context.getUi().getTerminal().writer().println();
