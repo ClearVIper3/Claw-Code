@@ -17,6 +17,7 @@ import com.thoughtcoding.tool.tools.GlobTool;
 import com.thoughtcoding.tool.tools.ReadTool;
 import com.thoughtcoding.tool.Sandbox;
 import com.thoughtcoding.tool.tools.TodoWriteTool;
+import com.thoughtcoding.tool.tools.SubAgentTool;
 import com.thoughtcoding.tool.tools.WriteTool;
 import com.thoughtcoding.ui.ThoughtCodingUI;
 
@@ -119,7 +120,7 @@ public class ThoughtCodingContext {
         ThoughtCodingUI ui = new ThoughtCodingUI();
 
         // 构建上下文（核心层初始化）
-        return new Builder()
+        ThoughtCodingContext context = new Builder()
                 .appConfig(appConfig)
                 .mcpConfig(mcpConfig)
                 .aiService(aiService)
@@ -131,6 +132,12 @@ public class ThoughtCodingContext {
                 .mcpToolManager(mcpToolManager)
                 .contextManager(contextManager)  // 🔥 添加 contextManager
                 .build();
+
+        // 🔥 子代理工具（task）：需持有已构建好的 context 引用来派生隔离子循环，故在 build 之后注册。
+        // toolRegistry 是同一可变实例，LangChainService 每次请求都重新读 getToolSpecifications()，能看见它。
+        context.getToolRegistry().register(new SubAgentTool(context));
+
+        return context;
     }
 
     /**
