@@ -21,6 +21,7 @@ import java.util.Map;
  *   read / glob  → 路径越界则 WARN，否则 ALLOW
  *   write / edit → 固定 WARN
  *   bash         → Gate 1 硬拒绝 DENY，否则固定 WARN（危险模式追加提示）
+ *   todo_write   → ALLOW（纯内存规划工具，无副作用，静默放行）
  *   未知工具      → WARN
  */
 public final class PermissionGate {
@@ -111,6 +112,7 @@ public final class PermissionGate {
             case "write"        -> PermissionResult.warn("⚠️ 将写入文件");
             case "edit"         -> PermissionResult.warn("⚠️ 将修改文件");
             case "bash"         -> checkBash(params);
+            case "todo_write"   -> PermissionResult.ALLOW;
             default             -> PermissionResult.warn("⚠️ 未知工具: " + toolName);
         };
     }
