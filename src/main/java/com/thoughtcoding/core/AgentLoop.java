@@ -13,6 +13,7 @@ import com.thoughtcoding.tool.ToolDispatcher;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 /**
  * AI 交互的核心循环。
@@ -22,6 +23,9 @@ import java.util.List;
  * 无新输入再问模型，直到模型不再请求工具、用户取消、或达到 maxToolIterations。
  */
 public class AgentLoop {
+    /** 只读工具：结果回喂模型即可，不在用户端 dump 内容（避免刷屏）。 */
+    private static final Set<String> QUIET_OUTPUT_TOOLS = Set.of("read", "glob", "skill");
+
     private final ThoughtCodingContext context;
     private final List<ChatMessage> history;
     private final String sessionId;
@@ -215,6 +219,11 @@ public class AgentLoop {
         }
         if (result.isSuccess()) {
             context.getUi().displaySuccess("✅ 完成: " + describeTool(call));
+            // 只读工具（read/glob/skill）的返回只需回喂模型，不在用户端 dump——
+            // 否则 skill 正文、整份文件内容会刷屏。仿 Claude Code 的做法。
+            if (QUIET_OUTPUT_TOOLS.contains(call.getToolName())) {
+                return;
+            }
             String output = result.getOutput();
             if (output != null && !output.trim().isEmpty()) {
                 for (String line : output.trim().split("\n")) {

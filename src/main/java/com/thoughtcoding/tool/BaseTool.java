@@ -5,6 +5,10 @@ import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
 
 /**
  * 工具的抽象基类，定义了工具的基本属性和行为
+ *
+ * <p><b>新增只读工具时注意：</b>若该工具的返回内容体积大、只是给模型用的（如读文件/查目录/加载技能正文），
+ * 记得把工具名加进 {@code AgentLoop.QUIET_OUTPUT_TOOLS}，否则完整内容会 dump 到用户终端刷屏。
+ * 该集合决定“结果只回喂模型、不在用户端显示”。（漏加不影响正确性，只是变啰嗦。）
  */
 public abstract class BaseTool {
     protected final String name;
