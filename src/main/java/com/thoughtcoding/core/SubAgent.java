@@ -26,7 +26,7 @@ import java.util.Map;
  * <p>与主 {@link AgentLoop} 的区别：
  * <ul>
  *   <li>自带独立 history（不碰主对话），只回传最终结论，中间过程丢弃；</li>
- *   <li>看不到、也不能调用 {@code SubAgent} 工具（禁止递归）；</li>
+ *   <li>看不到 {@code subAgent} 工具（已从其可见的工具规格中过滤），因此不可能递归；</li>
  *   <li>内部工具调用照样走 PRE_TOOL_USE 权限管道（写/执行类仍需确认）；</li>
  *   <li>调用 {@link com.thoughtcoding.service.AIService#chatOnceForSubagent} —— 隔离的模型往返，
  *       不抢占主循环共享的流式回调/生成状态。</li>
@@ -106,13 +106,6 @@ public class SubAgent {
             for (ToolCallRef ref : turn.getToolCalls()) {
                 String id = ref.getId();
                 String name = ref.getName();
-
-                // 递归硬闸：即便模型幻觉出 SubAgent，也拒绝并补一条配对结果
-                if ("subAgent".equals(name)) {
-                    printLine(ui, "[SubAgent] 拒绝调用 SubAgent（禁止嵌套SubAgent）");
-                    subHistory.add(ChatMessage.toolResult(id, name, "拒绝：SubAgent不能再派生SubAgent。"));
-                    continue;
-                }
 
                 Map<String, Object> params = parseArgs(mapper, ref.getArguments());
                 ToolCall call = new ToolCall(name, params, null, false, 0, false, id);

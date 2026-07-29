@@ -24,7 +24,7 @@ public interface AIService {
      * <p>供 {@code SubAgent} 在独立的子代理历史上驱动循环使用。实现须：
      * <ul>
      *   <li>只读 {@code history}（本方法不改写它，由调用方 SubAgent 维护配对）；</li>
-     *   <li>把工具规格里的 {@code task} 过滤掉（禁止子代理递归派生）；</li>
+     *   <li>把工具规格里的 {@code subAgent} 过滤掉（子代理看不到它，无从递归派生）；</li>
      *   <li>自行兜底任何超时/错误，返回一个「无工具调用」的结论文本，<b>永不抛出</b>。</li>
      * </ul>
      *

@@ -242,7 +242,7 @@ public class LangChainService implements AIService {
         if (toolRegistry != null) {
             List<dev.langchain4j.agent.tool.ToolSpecification> specs = toolRegistry.getToolSpecifications();
             if (specs != null && !specs.isEmpty()) {
-                // 过滤掉 subAgent 自身：子代理看不到 subAgent，无法递归派生（禁止递归第一道）
+                // 过滤掉 subAgent 自身：子代理看不到它，就无从递归派生（防递归的唯一手段）
                 List<dev.langchain4j.agent.tool.ToolSpecification> filtered = new ArrayList<>();
                 for (dev.langchain4j.agent.tool.ToolSpecification s : specs) {
                     if (!"subAgent".equals(s.name())) {
