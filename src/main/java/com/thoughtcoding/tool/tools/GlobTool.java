@@ -50,11 +50,6 @@ public class GlobTool extends BaseTool {
     }
 
     @Override
-    public boolean isReadOnly() {
-        return true;
-    }
-
-    @Override
     @SuppressWarnings("unchecked")
     public ToolResult execute(String input) {
         long startTime = System.currentTimeMillis();

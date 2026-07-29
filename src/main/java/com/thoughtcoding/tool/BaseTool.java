@@ -41,13 +41,6 @@ public abstract class BaseTool {
         return null;
     }
 
-    /**
-     * 是否为只读工具（只读工具无需用户确认，静默放行）。默认 false（写/执行类，需确认）。
-     */
-    public boolean isReadOnly() {
-        return false;
-    }
-
     protected ToolResult success(String output) {
         return ToolResult.success(output, 0);
     }

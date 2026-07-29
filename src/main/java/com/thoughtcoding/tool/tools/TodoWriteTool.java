@@ -67,12 +67,6 @@ public class TodoWriteTool extends BaseTool {
                 .build();
     }
 
-    /** 纯规划工具，无副作用，静默放行（权限见 PermissionGate 的 todo_write 分支）。 */
-    @Override
-    public boolean isReadOnly() {
-        return true;
-    }
-
     @Override
     @SuppressWarnings("unchecked")
     public ToolResult execute(String input) {
