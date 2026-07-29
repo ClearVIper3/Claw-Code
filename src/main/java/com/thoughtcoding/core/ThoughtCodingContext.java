@@ -16,8 +16,10 @@ import com.thoughtcoding.tool.tools.EditTool;
 import com.thoughtcoding.tool.tools.GlobTool;
 import com.thoughtcoding.tool.tools.ReadTool;
 import com.thoughtcoding.tool.Sandbox;
+import com.thoughtcoding.tool.SkillRegistry;
 import com.thoughtcoding.tool.tools.TodoWriteTool;
 import com.thoughtcoding.tool.tools.SubAgentTool;
+import com.thoughtcoding.tool.tools.SkillTool;
 import com.thoughtcoding.tool.tools.WriteTool;
 import com.thoughtcoding.ui.ThoughtCodingUI;
 
@@ -74,6 +76,10 @@ public class ThoughtCodingContext {
         // 初始化沙箱（以启动时的工作目录为 workspace 根）
         Sandbox.init(System.getProperty("user.dir"));
 
+        // 启动时扫描一次 skills/ 目录（name+description 常驻 system prompt，正文按需加载）
+        SkillRegistry skillRegistry = SkillRegistry.scan(
+                java.nio.file.Paths.get(System.getProperty("user.dir"), "skills"));
+
         // 能力层初始化,创建工具注册表
         ToolRegistry toolRegistry = new ToolRegistry(appConfig);
 
@@ -105,13 +111,18 @@ public class ThoughtCodingContext {
         // 规划工具（纯内存、无副作用），始终可用，无需 config 开关
         toolRegistry.register(new TodoWriteTool());
 
+        // 技能加载工具：目录为空则不注册，不给模型一个永远查不到东西的工具
+        if (!skillRegistry.isEmpty()) {
+            toolRegistry.register(new SkillTool(skillRegistry));
+        }
+
         // 🔥 初始化 MCP 服务（如果启用）
         if (mcpConfig != null && mcpConfig.isEnabled()) {
             initializeMCPTools(mcpConfig, mcpService, toolRegistry);
         }
 
         // 服务层初始化
-        ContextManager contextManager = new ContextManager(appConfig);  // 🔥 创建上下文管理器
+        ContextManager contextManager = new ContextManager(appConfig, skillRegistry);  // 🔥 创建上下文管理器
         AIService aiService = new LangChainService(appConfig, toolRegistry, contextManager);  // 🔥 注入 contextManager
         SessionService sessionService = new SessionService();
         PerformanceMonitor performanceMonitor = new PerformanceMonitor();

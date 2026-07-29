@@ -23,6 +23,7 @@ import java.util.Map;
  *   bash         → Gate 1 硬拒绝 DENY，否则固定 WARN（危险模式追加提示）
  *   todo_write   → ALLOW（纯内存规划工具，无副作用，静默放行）
  *   subAgent     → ALLOW（子Agent内部工具调用各自走权限管道，umbrella 再确认会双重弹框）
+ *   skill        → ALLOW（纯读取已扫描的本地技能文本，无副作用，静默放行）
  *   未知工具      → WARN
  */
 public final class PermissionGate {
@@ -115,6 +116,7 @@ public final class PermissionGate {
             case "bash"         -> checkBash(params);
             case "todo_write"   -> PermissionResult.ALLOW;
             case "subAgent"     -> PermissionResult.ALLOW;
+            case "skill"        -> PermissionResult.ALLOW;
             default             -> PermissionResult.warn("⚠️ 未知工具: " + toolName);
         };
     }
