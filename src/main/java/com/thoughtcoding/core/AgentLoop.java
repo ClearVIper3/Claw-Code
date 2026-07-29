@@ -184,7 +184,20 @@ public class AgentLoop {
         if (fn != null) {
             return call.getToolName() + "(" + fn + ")";
         }
+        String skill = extractSkillName(call);
+        if (skill != null) {
+            return call.getToolName() + "(" + skill + ")";
+        }
         return call.getToolName();
+    }
+
+    /** 从 skill 工具的调用参数中提取技能名（name），用于展示实际加载的技能。 */
+    private String extractSkillName(ToolCall toolCall) {
+        if (!"skill".equals(toolCall.getToolName()) || toolCall.getParameters() == null) {
+            return null;
+        }
+        Object name = toolCall.getParameters().get("name");
+        return name == null ? null : name.toString();
     }
 
     /** 显示原生工具执行结果。 */
