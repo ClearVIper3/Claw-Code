@@ -48,7 +48,7 @@ public class SubAgent {
      *
      * @param subAgentPrompt 交给SubAgent的详细任务指令（作为它的首条 user 消息）
      * @param label      简短标签，仅用于终端展示
-     * @return SubAgent的最终结论文本（唯一回传给主代理的内容）
+     * @return SubAgent的最终结论文本（唯一回传给主Agent的内容）
      */
     public String run(String subAgentPrompt, String label) {
         ThoughtCodingUI ui = context.getUi();

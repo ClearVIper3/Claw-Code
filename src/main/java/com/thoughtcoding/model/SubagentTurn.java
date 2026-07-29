@@ -4,7 +4,7 @@ import java.util.Collections;
 import java.util.List;
 
 /**
- * 子代理一轮模型往返的结果载体：模型这一轮产出的文本 + 它请求的工具调用。
+ * 子Agent一轮模型往返的结果载体：模型这一轮产出的文本 + 它请求的工具调用。
  *
  * <p>由 {@code AIService.chatOnceForSubagent} 返回，供 {@code SubAgent} 循环判断：
  * {@link #hasToolCalls()} 为 false → 本轮 {@link #text} 即最终结论；

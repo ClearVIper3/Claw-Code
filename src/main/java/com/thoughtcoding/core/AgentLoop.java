@@ -189,14 +189,14 @@ public class AgentLoop {
 
     /** 显示原生工具执行结果。 */
     private void displayNativeToolResult(ToolCall call, ToolResult result) {
-        // 🔥 subAgent（子代理）的过程与结论已由子代理实时打印，这里不再重复 dump 输出，避免刷屏。
+        // 🔥 subAgent（子Agent）的过程与结论已由子Agent实时打印，这里不再重复 dump 输出，避免刷屏。
         //    结论仍照常写回 history 回喂模型（见调用处），不受影响。
         if ("subAgent".equals(call.getToolName())) {
             if (result.isSuccess()) {
-                context.getUi().getTerminal().writer().println("└ 子代理已返回结论");
+                context.getUi().getTerminal().writer().println("└ 子Agent已返回结论");
                 context.getUi().getTerminal().writer().flush();
             } else {
-                context.getUi().displayError("❌ 子代理失败: " + result.getError());
+                context.getUi().displayError("❌ 子Agent失败: " + result.getError());
             }
             return;
         }

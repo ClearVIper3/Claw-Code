@@ -133,7 +133,7 @@ public class ThoughtCodingContext {
                 .contextManager(contextManager)  // 🔥 添加 contextManager
                 .build();
 
-        // 🔥 子代理工具（task）：需持有已构建好的 context 引用来派生隔离子循环，故在 build 之后注册。
+        // 🔥 子Agent 工具（subAgent）：需持有已构建好的 context 引用来派生隔离子循环，故在 build 之后注册。
         // toolRegistry 是同一可变实例，LangChainService 每次请求都重新读 getToolSpecifications()，能看见它。
         context.getToolRegistry().register(new SubAgentTool(context));
 
