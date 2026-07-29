@@ -26,7 +26,7 @@ import java.util.Map;
  * <p>与主 {@link AgentLoop} 的区别：
  * <ul>
  *   <li>自带独立 history（不碰主对话），只回传最终结论，中间过程丢弃；</li>
- *   <li>看不到、也不能调用 {@code task} 工具（禁止递归）；</li>
+ *   <li>看不到、也不能调用 {@code SubAgent} 工具（禁止递归）；</li>
  *   <li>内部工具调用照样走 PRE_TOOL_USE 权限管道（写/执行类仍需确认）；</li>
  *   <li>调用 {@link com.thoughtcoding.service.AIService#chatOnceForSubagent} —— 隔离的模型往返，
  *       不抢占主循环共享的流式回调/生成状态。</li>
@@ -46,19 +46,19 @@ public class SubAgent {
     /**
      * 运行SubAgent直到得出结论或达到最大轮次。
      *
-     * @param taskPrompt 交给SubAgent的详细任务指令（作为它的首条 user 消息）
+     * @param subAgentPrompt 交给SubAgent的详细任务指令（作为它的首条 user 消息）
      * @param label      简短标签，仅用于终端展示
      * @return SubAgent的最终结论文本（唯一回传给主代理的内容）
      */
-    public String run(String taskPrompt, String label) {
+    public String run(String subAgentPrompt, String label) {
         ThoughtCodingUI ui = context.getUi();
         ObjectMapper mapper = new ObjectMapper();
 
         printLine(ui, "[SubAgent] 开始: " + oneLine(label, 80));
 
-        // 全新隔离历史：SubAgent看不到主对话，任务信息全在 taskPrompt 里
+        // 全新隔离历史：SubAgent看不到主对话，任务信息全在 subAgentPrompt 里
         List<ChatMessage> subHistory = new ArrayList<>();
-        subHistory.add(new ChatMessage("user", taskPrompt));
+        subHistory.add(new ChatMessage("user", subAgentPrompt));
 
         // SubAgent自己的权限栈（共享 UI；auto-approve 默认 false —— 更安全的方向）
         ToolExecutionConfirmation confirmation =
@@ -107,9 +107,9 @@ public class SubAgent {
                 String id = ref.getId();
                 String name = ref.getName();
 
-                // 递归硬闸：即便模型幻觉出 task，也拒绝并补一条配对结果
-                if ("task".equals(name)) {
-                    printLine(ui, "[SubAgent] 拒绝调用 task（禁止嵌套SubAgent）");
+                // 递归硬闸：即便模型幻觉出 SubAgent，也拒绝并补一条配对结果
+                if ("subAgent".equals(name)) {
+                    printLine(ui, "[SubAgent] 拒绝调用 SubAgent（禁止嵌套SubAgent）");
                     subHistory.add(ChatMessage.toolResult(id, name, "拒绝：SubAgent不能再派生SubAgent。"));
                     continue;
                 }

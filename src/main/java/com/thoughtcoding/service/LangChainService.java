@@ -218,7 +218,7 @@ public class LangChainService implements AIService {
      *
      * <p>与 {@link #streamingChat} 的关键区别 —— <b>完全不触碰</b>本实例的共享可变状态
      * （{@code messageHandler}/{@code toolCallHandler}/{@code isGenerating}/{@code shouldStop}），
-     * 也<b>不改写</b>传入的 history，且从工具规格里过滤掉 {@code task} 以禁止子代理递归。
+     * 也<b>不改写</b>传入的 history，且从工具规格里过滤掉 {@code subAgent} 以禁止子代理递归。
      * 用本地 future 阻塞等待，任何超时/错误都兜底为一个「无工具调用」的结论文本，永不抛出。
      */
     @Override
@@ -242,10 +242,10 @@ public class LangChainService implements AIService {
         if (toolRegistry != null) {
             List<dev.langchain4j.agent.tool.ToolSpecification> specs = toolRegistry.getToolSpecifications();
             if (specs != null && !specs.isEmpty()) {
-                // 过滤掉 task 自身：子代理看不到 task，无法递归派生（禁止递归第一道）
+                // 过滤掉 subAgent 自身：子代理看不到 subAgent，无法递归派生（禁止递归第一道）
                 List<dev.langchain4j.agent.tool.ToolSpecification> filtered = new ArrayList<>();
                 for (dev.langchain4j.agent.tool.ToolSpecification s : specs) {
-                    if (!"task".equals(s.name())) {
+                    if (!"subAgent".equals(s.name())) {
                         filtered.add(s);
                     }
                 }
