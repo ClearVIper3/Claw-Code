@@ -21,7 +21,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 子代理循环 —— 在【全新、隔离】的对话历史里跑一个独立的 agentic 循环。
+ * SubAgent循环 —— 在【全新、隔离】的对话历史里跑一个独立的 agentic 循环。
  *
  * <p>与主 {@link AgentLoop} 的区别：
  * <ul>
@@ -44,23 +44,23 @@ public class SubAgent {
     }
 
     /**
-     * 运行子代理直到得出结论或达到最大轮次。
+     * 运行SubAgent直到得出结论或达到最大轮次。
      *
-     * @param taskPrompt 交给子代理的详细任务指令（作为它的首条 user 消息）
+     * @param taskPrompt 交给SubAgent的详细任务指令（作为它的首条 user 消息）
      * @param label      简短标签，仅用于终端展示
-     * @return 子代理的最终结论文本（唯一回传给主代理的内容）
+     * @return SubAgent的最终结论文本（唯一回传给主代理的内容）
      */
     public String run(String taskPrompt, String label) {
         ThoughtCodingUI ui = context.getUi();
         ObjectMapper mapper = new ObjectMapper();
 
-        printLine(ui, "[子代理] 开始: " + oneLine(label, 80));
+        printLine(ui, "[SubAgent] 开始: " + oneLine(label, 80));
 
-        // 全新隔离历史：子代理看不到主对话，任务信息全在 taskPrompt 里
+        // 全新隔离历史：SubAgent看不到主对话，任务信息全在 taskPrompt 里
         List<ChatMessage> subHistory = new ArrayList<>();
         subHistory.add(new ChatMessage("user", taskPrompt));
 
-        // 子代理自己的权限栈（共享 UI；auto-approve 默认 false —— 更安全的方向）
+        // SubAgent自己的权限栈（共享 UI；auto-approve 默认 false —— 更安全的方向）
         ToolExecutionConfirmation confirmation =
                 new ToolExecutionConfirmation(ui, ui.getLineReader());
         HookRegistry hookRegistry = new HookRegistry();
@@ -69,19 +69,18 @@ public class SubAgent {
 
         String subPrompt = context.getContextManager().buildSubagentSystemPrompt();
 
-        AppConfig.AIConfig aiCfg = context.getAppConfig().getAi();
-        int maxIter = aiCfg != null ? aiCfg.getMaxToolIterations() : 10;
+        int maxIter = 30;
 
         String lastText = "";
 
         for (int iter = 0; iter < maxIter; iter++) {
-            // 每轮首个 token 前打一个 [子代理] 前缀，其余 token 原样流式打印
+            // 每轮首个 token 前打一个 [SubAgent] 前缀，其余 token 原样流式打印
             final boolean[] headerPrinted = {false};
             SubagentTurn turn = context.getAiService().chatOnceForSubagent(
                     subPrompt, subHistory,
                     token -> {
                         if (!headerPrinted[0]) {
-                            printRaw(ui, "\n[子代理] ");
+                            printRaw(ui, "\n[SubAgent] ");
                             headerPrinted[0] = true;
                         }
                         printRaw(ui, token);
@@ -95,7 +94,7 @@ public class SubAgent {
 
             // 无工具调用 → 本轮即最终结论
             if (!turn.hasToolCalls()) {
-                printLine(ui, "[子代理] 结束");
+                printLine(ui, "[SubAgent] 结束");
                 return lastText;
             }
 
@@ -103,28 +102,28 @@ public class SubAgent {
             subHistory.add(ChatMessage.assistantWithToolCalls(turn.getText(), turn.getToolCalls()));
 
             // 逐个执行 —— 关键不变量：每个工具调用必须严格配对恰好一个 tool 结果，
-            // 否则子代理绕过了主链路的 sanitizeToolPairs，下一轮会 400。
+            // 否则SubAgent绕过了主链路的 sanitizeToolPairs，下一轮会 400。
             for (ToolCallRef ref : turn.getToolCalls()) {
                 String id = ref.getId();
                 String name = ref.getName();
 
                 // 递归硬闸：即便模型幻觉出 task，也拒绝并补一条配对结果
                 if ("task".equals(name)) {
-                    printLine(ui, "[子代理] 拒绝调用 task（禁止嵌套子代理）");
-                    subHistory.add(ChatMessage.toolResult(id, name, "拒绝：子代理不能再派生子代理。"));
+                    printLine(ui, "[SubAgent] 拒绝调用 task（禁止嵌套SubAgent）");
+                    subHistory.add(ChatMessage.toolResult(id, name, "拒绝：SubAgent不能再派生SubAgent。"));
                     continue;
                 }
 
                 Map<String, Object> params = parseArgs(mapper, ref.getArguments());
                 ToolCall call = new ToolCall(name, params, null, false, 0, false, id);
 
-                printLine(ui, "[子代理] 调用 " + name + argSummary(params));
+                printLine(ui, "[SubAgent] 调用 " + name + argSummary(params));
 
                 // 权限管道（写/执行类会弹确认）
                 HookResult pre = hookRegistry.fire(HookContext.forPreTool(context, subHistory, call));
                 if (pre.isBlocked()) {
                     String msg = pre.message() != null ? pre.message() : "工具执行被阻止。";
-                    printLine(ui, "[子代理] 结果: 已阻止 —— " + oneLine(msg, 80));
+                    printLine(ui, "[SubAgent] 结果: 已阻止 —— " + oneLine(msg, 80));
                     subHistory.add(ChatMessage.toolResult(id, name, msg));
                     continue;
                 }
@@ -136,20 +135,20 @@ public class SubAgent {
                             ? (result.getOutput() == null || result.getOutput().isBlank()
                                 ? "执行成功（无输出）。" : result.getOutput())
                             : ("执行失败: " + result.getError());
-                    printLine(ui, "[子代理] 结果: " + (result.isSuccess()
+                    printLine(ui, "[SubAgent] 结果: " + (result.isSuccess()
                             ? "成功" : ("失败 —— " + oneLine(result.getError(), 80))));
                     subHistory.add(ChatMessage.toolResult(id, name, resultText));
                 } catch (Exception e) {
-                    printLine(ui, "[子代理] 结果: 执行异常 —— " + oneLine(e.getMessage(), 80));
+                    printLine(ui, "[SubAgent] 结果: 执行异常 —— " + oneLine(e.getMessage(), 80));
                     subHistory.add(ChatMessage.toolResult(id, name, "执行异常: " + e.getMessage()));
                 }
             }
         }
 
         // 达到最大轮次：给出兜底结论，避免返回空串
-        printLine(ui, "[子代理] 已达最大工具轮次(" + maxIter + ")，停止。");
+        printLine(ui, "[SubAgent] 已达最大工具轮次(" + maxIter + ")，停止。");
         return (lastText == null || lastText.isBlank())
-                ? "子代理已达最大工具轮次(" + maxIter + ")，未产出最终结论。"
+                ? "SubAgent已达最大工具轮次(" + maxIter + ")，未产出最终结论。"
                 : lastText;
     }
 

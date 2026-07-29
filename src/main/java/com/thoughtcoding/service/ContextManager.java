@@ -155,7 +155,7 @@ public class ContextManager {
         StringBuilder sb = new StringBuilder();
         sb.append("## 指令\n");
         sb.append("- 始终用中文回答用户的所有问题，解释与代码注释也用中文。\n");
-        sb.append("- 你是一位资深编程助手（类似 Claude Code），可调用工具完成任务。\n\n");
+        sb.append("- 你是一位资深编程助手，可调用工具完成任务。\n\n");
 
         sb.append("## 工作环境\n");
         sb.append("工作目录: ").append(cwd).append("\n");

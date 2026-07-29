@@ -22,7 +22,7 @@ import java.util.Map;
  *   write / edit → 固定 WARN
  *   bash         → Gate 1 硬拒绝 DENY，否则固定 WARN（危险模式追加提示）
  *   todo_write   → ALLOW（纯内存规划工具，无副作用，静默放行）
- *   task         → ALLOW（子代理内部工具调用各自走权限管道，umbrella 再确认会双重弹框）
+ *   subAgent     → ALLOW（子代理内部工具调用各自走权限管道，umbrella 再确认会双重弹框）
  *   未知工具      → WARN
  */
 public final class PermissionGate {
@@ -114,7 +114,7 @@ public final class PermissionGate {
             case "edit"         -> PermissionResult.warn("⚠️ 将修改文件");
             case "bash"         -> checkBash(params);
             case "todo_write"   -> PermissionResult.ALLOW;
-            case "task"         -> PermissionResult.ALLOW;
+            case "subAgent"     -> PermissionResult.ALLOW;
             default             -> PermissionResult.warn("⚠️ 未知工具: " + toolName);
         };
     }

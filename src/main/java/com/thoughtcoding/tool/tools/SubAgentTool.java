@@ -35,7 +35,7 @@ public class SubAgentTool extends BaseTool {
     private final ThoughtCodingContext context;
 
     public SubAgentTool(ThoughtCodingContext context) {
-        super("task",
+        super("subAgent",
                 "把一个复杂、可独立完成的多步子任务派发给子代理处理，让主对话保持干净。\n"
                 + "何时使用：任务较大且可独立完成（如“在某模块实现并自测一个功能”“调研代码库某问题并给出结论”），"
                 + "其大量中间步骤（读文件、跑命令、试错）不需要留在主对话里时。简单/单步任务直接自己做，无需使用。\n"
