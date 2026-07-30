@@ -8,7 +8,7 @@ import com.thoughtcoding.model.ChatMessage;
 import com.thoughtcoding.model.ToolCall;
 import com.thoughtcoding.model.ToolResult;
 import com.thoughtcoding.service.PerformanceMonitor;
-import com.thoughtcoding.tool.PermissionHook;
+import com.thoughtcoding.security.PermissionHook;
 import com.thoughtcoding.tool.ToolDispatcher;
 
 import java.util.ArrayList;

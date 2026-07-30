@@ -3,7 +3,7 @@ package com.thoughtcoding.tool.tools;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.thoughtcoding.model.ToolResult;
 import com.thoughtcoding.tool.BaseTool;
-import com.thoughtcoding.tool.SkillRegistry;
+import com.thoughtcoding.skill.SkillRegistry;
 import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
 
 import java.util.Map;

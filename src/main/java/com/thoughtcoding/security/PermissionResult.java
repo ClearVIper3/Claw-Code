@@ -1,4 +1,4 @@
-package com.thoughtcoding.tool;
+package com.thoughtcoding.security;
 
 /**
  * 权限检查结果。

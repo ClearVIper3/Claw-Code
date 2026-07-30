@@ -1,4 +1,4 @@
-package com.thoughtcoding.tool;
+package com.thoughtcoding.security;
 
 import com.thoughtcoding.exception.WorkspaceSecurityException;
 
