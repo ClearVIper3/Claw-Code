@@ -17,5 +17,8 @@ Thumbs.db
 # 会话数据（用户数据，不提交）
 sessions/
 
+# 压缩管线落盘（完整对话 transcript + 大工具结果，不提交）
+transcripts/
+
 # 本地配置（不提交）
 config.yaml

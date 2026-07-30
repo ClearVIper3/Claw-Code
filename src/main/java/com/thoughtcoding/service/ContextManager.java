@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import com.thoughtcoding.config.AppConfig;
 import com.thoughtcoding.model.ChatMessage;
 import com.thoughtcoding.skill.SkillRegistry;
+import com.thoughtcoding.util.FileUtils;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.model.openai.OpenAiChatModel;
@@ -12,18 +13,27 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 上下文管理器
- * 负责管理对话历史的长度，防止 Token 超限
+ * 上下文管理器：管理对话历史长度，防止 Token 超限。
  *
- * 支持两种策略：
- * 1. 滑动窗口：保留最近 N 轮对话
- * 2. Token 控制：根据 Token 数量动态截断
+ * <p>采用四层压缩管线（顺序严格不可换，仿 Claude Code）：
+ * <ol>
+ *   <li><b>L3 toolResultBudget</b>：单条巨型工具结果落盘，上下文只留标记+预览（<b>必须最先</b>，趁全文还在）。</li>
+ *   <li><b>L1 snipCompact</b>：消息条数超限时裁掉中段，保留头尾（带工具配对边界保护）。</li>
+ *   <li><b>L2 microCompact</b>：仅最近 N 条工具结果保留全文，更旧的换一行占位。</li>
+ *   <li><b>L4 compactHistory</b>：前三层跑完仍超 token 阈值时，落盘完整对话并用 LLM 摘要替换旧历史。</li>
+ * </ol>
+ * 最后统一经 {@link #sanitizeToolPairs} 兜底工具调用/结果配对，保证不触发模型 400。
+ *
+ * <p>贯穿全案的铁律：<b>改副本不改原历史</b>——入口深拷贝一次，各层只动副本，绝不修改调用方传入的 List。
  */
 public class ContextManager {
     private static final Logger log = LoggerFactory.getLogger(ContextManager.class);
@@ -31,24 +41,27 @@ public class ContextManager {
     private final AppConfig appConfig;
     private final SkillRegistry skillRegistry;
 
-    // 默认配置
-    private static final int DEFAULT_MAX_HISTORY_TURNS = 10;  // 保留10轮（20条消息）
-    private static final int DEFAULT_MAX_CONTEXT_TOKENS = 1000000;  // 为历史预留1M tokens
-    private static final int DEFAULT_RESERVE_TOKENS = 1000;  // 为响应预留1000 tokens
-    private static final int DEFAULT_KEEP_RECENT = 3; // 保留3轮（三轮以上的tool_result将被清除）
+    // ── 四层管线参数（构造时从 config 读入，全部有默认值）──
+    private int maxContextTokens = 48000;       // L4 触发阈值（估算 token）
+    private int maxMessages = 50;               // L1 触发的消息数上限
+    private int snipKeepHead = 3;               // L1 保留头部条数
+    private int snipKeepTail = 20;              // L1 保留尾部条数
+    private int keepRecentToolResults = 3;      // L2 保留最近工具结果全文条数
+    private int maxToolResultBytes = 200000;    // L3 当轮工具结果聚合预算（UTF-8 字节）：这批总量超过才触发落盘
+    private int perResultPersistBytes = 30000;  // L3 单块落盘阈值：触发后只落单条超过此值的结果
+    private int l4KeepTail = 6;                 // L4 摘要后保留尾部条数
 
-    // 策略枚举
-    public enum Strategy {
-        SLIDING_WINDOW,  // 滑动窗口
-        TOKEN_BASED,     // 基于 Token
-        HYBRID           // 混合策略
-    }
+    private static final int PREVIEW_CHARS = 2000; // L3 落盘后保留的预览字符数
 
-    private Strategy strategy = Strategy.TOKEN_BASED;  // 默认使用 Token 控制
-    private int maxHistoryTurns = DEFAULT_MAX_HISTORY_TURNS;
-    private int maxContextTokens = DEFAULT_MAX_CONTEXT_TOKENS;
+    // 熔断器：L4 摘要连续失败达到此次数后，本会话不再尝试摘要，避免每轮都白白调用 LLM（+延迟+日志噪音）。
+    // 对齐 Claude Code MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES (autoCompact.ts:70)。失败为模型无关计数，可直接迁移。
+    private static final int MAX_CONSECUTIVE_COMPACT_FAILURES = 3;
+    private int consecutiveCompactFailures = 0; // L4 连续失败计数（摘要成功即清零）
 
     private static final Path TRANSCRIPT_DIR = Paths.get("transcripts");
+    private static final Path PERSISTED_DIR = TRANSCRIPT_DIR.resolve("persisted");
+    private static final DateTimeFormatter TS_FMT = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
+
     private final ObjectMapper objectMapper;
 
     private OpenAiChatModel ChatModel;
@@ -59,16 +72,26 @@ public class ContextManager {
         this.objectMapper = new ObjectMapper()
                 .enable(SerializationFeature.INDENT_OUTPUT)
                 .disable(SerializationFeature.FAIL_ON_EMPTY_BEANS);
-        initializeChatModel();
         loadConfiguration();
+        initializeChatModel();
     }
 
     /**
-     * 从配置加载参数
+     * 从 config 的 ai 段读入四层管线参数（缺省则用字段默认值）。
      */
     private void loadConfiguration() {
-        // TODO: 从 config.yaml 读取配置
-        // 目前使用默认值
+        AppConfig.AIConfig ai = appConfig != null ? appConfig.getAi() : null;
+        if (ai == null) {
+            return;
+        }
+        this.maxContextTokens = ai.getMaxContextTokens();
+        this.maxMessages = ai.getMaxMessages();
+        this.snipKeepHead = ai.getSnipKeepHead();
+        this.snipKeepTail = ai.getSnipKeepTail();
+        this.keepRecentToolResults = ai.getKeepRecentToolResults();
+        this.maxToolResultBytes = this.maxContextTokens / 2;
+        this.perResultPersistBytes = ai.getPerResultPersistBytes();
+        this.l4KeepTail = ai.getL4KeepTail();
     }
 
     private void initializeChatModel() {
@@ -82,6 +105,9 @@ public class ContextManager {
         }
     }
 
+    /**
+     * 构建 L4 摘要专用模型：与主模型同源。摘要输出长度由 config 的 maxTokens 决定（用户按自己的模型设定）。
+     */
     private OpenAiChatModel createDeepSeekModel(AppConfig.ModelConfig config) {
         return OpenAiChatModel.builder()
                 .baseUrl(config.getBaseURL())
@@ -95,42 +121,358 @@ public class ContextManager {
     }
 
     /**
-     * 获取适合发送给 AI 的上下文
-     * 应用历史长度限制策略
+     * 获取适合发送给 AI 的上下文——四层压缩管线。
      *
-     * @param fullHistory 完整的对话历史
-     * @return 经过处理的历史（不超过限制）
+     * <p>顺序严格不可换：L3(落盘) → L1(裁中段) → L2(旧结果占位) → L4(超阈值则摘要) → 配对兜底。
+     * 入口统一深拷贝一次，后续各层只动副本，绝不修改传入的 {@code fullHistory}。
+     *
+     * @param fullHistory 完整的对话历史（只读，不会被修改）
+     * @return 经过处理的历史（不超过限制、工具配对一致）
      */
     public List<ChatMessage> getContextForAI(List<ChatMessage> fullHistory) {
         if (fullHistory == null || fullHistory.isEmpty()) {
             return new ArrayList<>();
         }
 
-        List<ChatMessage> result;
+        // 入口深拷贝一次，后续各层原地改这份副本，天然不碰入参
+        List<ChatMessage> work = deepCopyAll(fullHistory);
 
-        //自动压缩超过三轮的工具调用结果
-        List<ChatMessage> afterMicro = micro_compact(fullHistory);
+        work = toolResultBudget(work);   // L3：当轮工具结果聚合超预算才落盘其中最大的几块（正常单次 read 不碰）
+        work = snipCompact(work);        // L1：消息数超限裁中段（边界保护）
+        work = microCompact(work);       // L2：最近 N 条全文，更旧的占位（跳过 L3 已落盘标记）
 
-        switch (strategy) {
-            case SLIDING_WINDOW:
-                result = applySlidingWindow(afterMicro);
-                break;
-            case TOKEN_BASED:
-                result = applyTokenLimit(fullHistory, afterMicro);
-                break;
-            case HYBRID:
-                result = applyHybridStrategy(fullHistory, afterMicro);
-                break;
-            default:
-                result = afterMicro;
+        if (estimateTotalTokens(work) > maxContextTokens) {
+            work = compactHistory(work, fullHistory); // L4：LLM 摘要，返回新列表，只读 fullHistory
         }
 
-        // 输出统计信息
-        logContextStatistics(fullHistory, result);
+        // 🔥 保证发给模型的历史工具调用/结果配对一致（防止各层裁剪导致孤立 id → 模型 400）
+        List<ChatMessage> result = sanitizeToolPairs(work);
 
-        // 🔥 保证发给模型的历史工具调用/结果配对一致（防止压缩裁剪导致孤立 id → 模型 400）
-        return sanitizeToolPairs(result);
+        logContextStatistics(fullHistory, result);
+        return result;
     }
+
+    /** 深拷贝整个历史（各层只动副本，不碰调用方入参）。 */
+    private List<ChatMessage> deepCopyAll(List<ChatMessage> messages) {
+        List<ChatMessage> copy = new ArrayList<>(messages.size());
+        for (ChatMessage m : messages) {
+            copy.add(new ChatMessage(m));
+        }
+        return copy;
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // L3：当轮工具结果聚合预算落盘（对齐真实 CC per-message budget / s08 tool_result_budget）
+    // ────────────────────────────────────────────────────────────────────────
+
+    /**
+     * L3：只处理<b>当轮那批工具结果</b>——即历史尾部连续的一段 {@code role=tool} 消息
+     * <b>双阈值</b>：这批总字节超过 {@link #maxToolResultBytes}（当轮聚合预算）才触发；
+     * 触发后按大小从大到小，仅把单块超过 {@link #perResultPersistBytes} 的落盘到 {@link #PERSISTED_DIR}，
+     * 直到批总量回落到预算内。正文换 {@code <persisted-output>} 标记 + 预览 + 可 read 重读的磁盘路径。
+     *
+     * <p><b>为何这样定</b>：正常单次 read 大文件（几十 KB）落在聚合预算内、根本不碰——这正是"agent 读得到
+     * 文件全貌"的保证；只有一轮内 N 个并行工具（bash/grep/glob 等）合起来塞爆预算时，才落盘其中最大的几块。
+     * 不区分新旧、不扫全历史（每轮 O(尾部批)），落一次即成标记、L2 随后跳过（见 {@link #isPersistedMarker}）。
+     * 不动 role/toolCallId/toolName，保持配对；落盘失败降级保留原内容，绝不因落盘破坏管线。
+     */
+    private List<ChatMessage> toolResultBudget(List<ChatMessage> work) {
+        // 取历史尾部连续的一段 role=tool 消息（当轮那批工具结果）
+        List<ChatMessage> batch = new ArrayList<>();
+        for (int i = work.size() - 1; i >= 0; i--) {
+            ChatMessage m = work.get(i);
+            if (m != null && m.isToolMessage()) {
+                batch.add(m);
+            } else {
+                break; // 遇到非 tool 消息即批边界
+            }
+        }
+        if (batch.isEmpty()) {
+            return work;
+        }
+
+        // 批总字节（跳过已带落盘标记的，避免重复计入/重复落盘）
+        long total = 0;
+        for (ChatMessage m : batch) {
+            String c = m.getContent();
+            if (c != null && !isPersistedMarker(c)) {
+                total += c.getBytes(StandardCharsets.UTF_8).length;
+            }
+        }
+        if (total <= maxToolResultBytes) {
+            return work; // 当轮聚合未超预算 → 全部保留全文（单个大 read 落在这里）
+        }
+
+        // 超预算：按单块大小从大到小落盘，仅落超过单块阈值的，直到回落到预算内
+        batch.sort((a, b) -> Integer.compare(
+                byteLen(b.getContent()), byteLen(a.getContent())));
+        for (ChatMessage m : batch) {
+            if (total <= maxToolResultBytes) {
+                break;
+            }
+            String content = m.getContent();
+            if (content == null || isPersistedMarker(content)) {
+                continue;
+            }
+            int bytes = byteLen(content);
+            if (bytes <= perResultPersistBytes) {
+                continue; // 单块太小不值得落盘（即便批超预算）
+            }
+            String marker = persistToolResult(m, content, bytes);
+            if (marker != null) {
+                m.setContent(marker);
+                total -= bytes; // 预览很小，近似认为这块从预算里移除
+            }
+        }
+        return work;
+    }
+
+    /** 内容的 UTF-8 字节长度（null 视作 0）。 */
+    private int byteLen(String s) {
+        return s == null ? 0 : s.getBytes(StandardCharsets.UTF_8).length;
+    }
+
+    /**
+     * 把一条工具结果的全文落盘，返回 {@code <persisted-output>} 标记+预览；失败返回 null（调用方保留原文）。
+     */
+    private String persistToolResult(ChatMessage m, String content, int bytes) {
+        try {
+            String id = m.getToolCallId() != null ? m.getToolCallId() : m.getId();
+            String tool = m.getToolName() != null ? m.getToolName() : "unknown";
+            String sid = m.getSessionId() != null ? m.getSessionId() : "nosession";
+            String fileName = safeName(sid) + "-" + safeName(id) + "-" + System.nanoTime() + ".txt";
+            Path target = PERSISTED_DIR.resolve(fileName);
+
+            FileUtils.writeFile(target, content);
+
+            String preview = content.length() > PREVIEW_CHARS
+                    ? content.substring(0, PREVIEW_CHARS) : content;
+            return "<persisted-output path=\"" + target.toString().replace('\\', '/')
+                    + "\" bytes=\"" + bytes + "\" tool=\"" + tool + "\">\n"
+                    + preview
+                    + "\n...(truncated, full content persisted to disk)\n</persisted-output>";
+        } catch (Exception e) {
+            log.warn("L3 工具结果落盘失败，保留原内容: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /** 把字符串净化为安全文件名片段。 */
+    private String safeName(String s) {
+        return s.replaceAll("[^A-Za-z0-9._-]", "_");
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // L1：消息条数超限时裁中段
+    // ────────────────────────────────────────────────────────────────────────
+
+    /**
+     * L1：消息数超过 {@link #maxMessages} 时，保留头部 {@link #snipKeepHead} 条 + 尾部 {@link #snipKeepTail} 条，
+     * 中间换成一条 {@code [snipped N messages]} 占位（role=user）。切点带工具配对边界保护，避免拆散
+     * assistant(toolCalls)↔tool 组——这是非破坏性对齐，与最终 {@link #sanitizeToolPairs}（破坏性兜底）分工互补。
+     */
+    private List<ChatMessage> snipCompact(List<ChatMessage> work) {
+        int n = work.size();
+        if (n <= maxMessages) {
+            return work;
+        }
+
+        int headEnd = Math.min(snipKeepHead, n);
+        int tailStart = Math.max(0, n - snipKeepTail);
+        if (tailStart <= headEnd) {
+            return work; // 头尾就已覆盖全部，无中段可裁
+        }
+
+        headEnd = adjustHeadEndForToolPairs(work, headEnd);
+        tailStart = adjustTailStartForToolPairs(work, tailStart);
+        if (tailStart <= headEnd) {
+            return work; // 边界保护后无可裁中段
+        }
+
+        int snipped = tailStart - headEnd;
+        String sessionId = work.get(0).getSessionId();
+
+        List<ChatMessage> out = new ArrayList<>(headEnd + 1 + (n - tailStart));
+        out.addAll(work.subList(0, headEnd));
+        out.add(new ChatMessage("user", "[snipped " + snipped + " messages from conversation middle]", sessionId));
+        out.addAll(work.subList(tailStart, n));
+        return out;
+    }
+
+    /**
+     * 头切点保护：若头部最后一条是「发起了工具调用的 assistant」，其工具结果在中段会成孤儿，
+     * 故把 headEnd 前移到该 assistant 之前（整组推入被裁中段）。
+     */
+    private int adjustHeadEndForToolPairs(List<ChatMessage> work, int headEnd) {
+        while (headEnd > 0 && work.get(headEnd - 1).hasToolCalls()) {
+            headEnd--;
+        }
+        return headEnd;
+    }
+
+    /**
+     * 尾切点保护：若 tailStart 落在 role=tool 上，其发起调用的 assistant 在中段会成孤儿，
+     * 故把 tailStart 前移越过这些工具结果，直到落在非工具消息（通常即发起调用的 assistant）上，整组纳入尾部。
+     */
+    private int adjustTailStartForToolPairs(List<ChatMessage> work, int tailStart) {
+        while (tailStart > 0 && work.get(tailStart).isToolMessage()) {
+            tailStart--;
+        }
+        return tailStart;
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // L2：旧工具结果占位
+    // ────────────────────────────────────────────────────────────────────────
+
+    /**
+     * L2：仅保留最近 {@link #keepRecentToolResults} 条工具结果的全文，更旧的换成一行占位
+     * （只截断内容，不删消息、不动 role/toolCallId，保持配对）。入参已是副本，原地改。
+     * 已被 L3 落盘的旧结果（带 {@code <persisted-output>} 标记）跳过——保留其预览+磁盘路径，不覆盖成占位。
+     */
+    private List<ChatMessage> microCompact(List<ChatMessage> work) {
+        List<ChatMessage> toolResults = collectToolResultMessages(work);
+        if (toolResults.size() <= keepRecentToolResults) {
+            return work;
+        }
+
+        // 压缩早期的工具结果（除了最后 keepRecentToolResults 条）——只截断内容，保持配对
+        List<ChatMessage> toCompact = toolResults.subList(0, toolResults.size() - keepRecentToolResults);
+        for (ChatMessage msg : toCompact) {
+            String content = msg.getContent();
+            if (content == null || content.length() <= 100) {
+                continue;
+            }
+            if (isPersistedMarker(content)) {
+                continue; // L3 已落盘，保留预览+磁盘路径，不覆盖
+            }
+            String toolName = (msg.isToolMessage() && msg.getToolName() != null)
+                    ? msg.getToolName() : extractToolNameFromContent(content);
+            msg.setContent(String.format("[Previous: used %s]", toolName));
+        }
+
+        return work;
+    }
+
+    /**
+     * 收集历史中的工具结果消息（原生 role=tool，或旧会话的 role=system + "Tool '" 前缀），按出现顺序。
+     * L2 与 L3 共用它，保证两者对"最近 N 条 / 更旧"的划分完全一致，不产生错位。
+     */
+    private List<ChatMessage> collectToolResultMessages(List<ChatMessage> work) {
+        List<ChatMessage> toolResults = new ArrayList<>();
+        for (ChatMessage msg : work) {
+            if (msg == null) continue;
+            boolean isNativeToolResult = msg.isToolMessage();
+            boolean isLegacyToolResult = "system".equals(msg.getRole()) && isToolResultMessage(msg.getContent());
+            if (isNativeToolResult || isLegacyToolResult) {
+                toolResults.add(msg);
+            }
+        }
+        return toolResults;
+    }
+
+    /** 是否为 L3 落盘后写入的 {@code <persisted-output>} 标记内容。 */
+    private boolean isPersistedMarker(String content) {
+        return content != null && content.startsWith("<persisted-output ");
+    }
+
+    private boolean isToolResultMessage(String content) {
+        if (content == null) return false;
+        // 工具成功或失败消息的特征前缀（兼容旧会话）
+        return content.startsWith("Tool '") || content.startsWith("Tool execution failed: ");
+    }
+
+    // 从消息内容中提取工具名称
+    // 格式示例: "Tool 'read_file' executed successfully ..." 或 "Tool execution failed: 'unknown_tool' not found."
+    private String extractToolNameFromContent(String content) {
+        try {
+            int start = content.indexOf('\'');
+            int end = content.indexOf('\'', start + 1);
+            if (start != -1 && end != -1) {
+                return content.substring(start + 1, end);
+            }
+            if (content.startsWith("Tool execution failed: ")) {
+                String after = content.substring("Tool execution failed: ".length());
+                int space = after.indexOf(' ');
+                if (space > 0) {
+                    return after.substring(0, space);
+                }
+                return "unknown";
+            }
+            return "unknown";
+        } catch (Exception e) {
+            return "unknown";
+        }
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // L4：LLM 摘要（前三层跑完仍超阈值时）
+    // ────────────────────────────────────────────────────────────────────────
+
+    /**
+     * L4：把待摘要段（尾部 {@link #l4KeepTail} 条之前的全部）落盘完整原始对话 → LLM 摘要 →
+     * 构造并返回<b>全新列表</b>（[摘要消息] + 尾部）。绝不修改 {@code fullHistory}（只读它取 sessionId、写 transcript）。
+     * 模型不可用或摘要失败时放弃 L4，原样返回 {@code work}。
+     */
+    private List<ChatMessage> compactHistory(List<ChatMessage> work, List<ChatMessage> fullHistory) {
+        if (ChatModel == null) {
+            return work; // 模型不可用 → 放弃 L4
+        }
+        if (consecutiveCompactFailures >= MAX_CONSECUTIVE_COMPACT_FAILURES) {
+            // 熔断：连续失败过多，本会话不再尝试摘要（前三层的本地裁剪仍在生效）
+            log.warn("L4 摘要已连续失败 {} 次，触发熔断，本会话停止摘要尝试。", consecutiveCompactFailures);
+            return work;
+        }
+
+        int n = work.size();
+        int tailStart = adjustTailStartForToolPairs(work, Math.max(0, n - l4KeepTail));
+        if (tailStart <= 0) {
+            return work; // 没有可摘要的前段
+        }
+
+        // 摘要前先落盘完整原始对话，保留可恢复记录
+        writeTranscript(fullHistory);
+
+        List<ChatMessage> toSummarize = work.subList(0, tailStart);
+        List<ChatMessage> tail = work.subList(tailStart, n);
+
+        String summary;
+        try {
+            String prompt = "Summarize this conversation for continuity. Include: " +
+                    "1) What was accomplished, 2) Current state, 3) Key decisions made. " +
+                    "Be concise but preserve critical details (file paths, tool outcomes, pending TODOs).\n\n" +
+                    truncateConversation(toSummarize);
+            summary = callLlmForSummary(prompt);
+        } catch (Exception e) {
+            consecutiveCompactFailures++;
+            log.warn("L4 摘要失败({}/{})，放弃本次摘要: {}",
+                    consecutiveCompactFailures, MAX_CONSECUTIVE_COMPACT_FAILURES, e.getMessage());
+            return work;
+        }
+
+        consecutiveCompactFailures = 0; // 摘要成功 → 清零熔断计数
+        String sessionId = work.get(0).getSessionId();
+        List<ChatMessage> out = new ArrayList<>(1 + tail.size());
+        out.add(new ChatMessage("user", "[Conversation compressed.]\n\n" + summary, sessionId));
+        out.addAll(tail);
+        return out;
+    }
+
+    /** 摘要前把完整原始对话落盘到 transcripts/，失败仅告警不阻断。 */
+    private void writeTranscript(List<ChatMessage> fullHistory) {
+        try {
+            String sid = fullHistory.get(0).getSessionId();
+            String name = "session-" + safeName(sid != null ? sid : "nosession")
+                    + "-" + LocalDateTime.now().format(TS_FMT) + ".json";
+            FileUtils.writeFile(TRANSCRIPT_DIR.resolve(name), objectMapper.writeValueAsString(fullHistory));
+        } catch (Exception e) {
+            log.warn("L4 transcript 落盘失败（不阻断摘要）: {}", e.getMessage());
+        }
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // 系统提示构建（保持不变）
+    // ────────────────────────────────────────────────────────────────────────
 
     /**
      * 构建固定的项目上下文消息（原生 function calling 的简短系统提示），每次 AI 调用注入。
@@ -213,8 +555,12 @@ public class ContextManager {
         return sb.toString();
     }
 
+    // ────────────────────────────────────────────────────────────────────────
+    // 工具配对兜底 + 估算/摘要辅助
+    // ────────────────────────────────────────────────────────────────────────
+
     /**
-     * 🔥 保证发给模型的历史中工具调用/结果配对一致（无论压缩如何裁剪）：
+     * 🔥 保证发给模型的历史中工具调用/结果配对一致（无论各层如何裁剪）：
      *  - 丢弃没有对应 assistant 工具调用的孤立 role=tool 结果；
      *  - assistant 消息里剥掉没有对应结果的 toolCalls（非破坏性：修改副本，不动原始历史）。
      * 违反 "assistant 工具调用必须紧跟同 id 的 tool 结果" 会导致模型 400。
@@ -265,163 +611,24 @@ public class ContextManager {
         return out;
     }
 
-    private List<ChatMessage> micro_compact(List<ChatMessage> messages) {
-        // sessions中保存结果不变，不可修改messages，使用深拷贝：创建全新消息对象
-        List<ChatMessage> result = new ArrayList<>();
-        for (ChatMessage msg : messages) {
-            result.add(new ChatMessage(msg)); // 使用复制构造器
-        }
-
-        // 收集工具结果消息（在 result 中）：原生 role=tool 或旧的 role=system + "Tool '" 前缀
-        List<ChatMessage> toolResults = new ArrayList<>();
-        for (ChatMessage msg : result) {
-            if (msg == null) continue;
-            boolean isNativeToolResult = msg.isToolMessage();
-            boolean isLegacyToolResult = "system".equals(msg.getRole()) && isToolResultMessage(msg.getContent());
-            if (isNativeToolResult || isLegacyToolResult) {
-                toolResults.add(msg);
-            }
-        }
-
-        int KEEP_RECENT = DEFAULT_KEEP_RECENT;
-        if (toolResults.size() <= KEEP_RECENT) {
-            return result; // 不需要压缩，返回深拷贝副本
-        }
-
-        // 压缩早期的工具结果（除了最后 KEEP_RECENT 条）——只截断内容，不删除消息、不动 role/toolCallId，保持配对
-        List<ChatMessage> toCompact = toolResults.subList(0, toolResults.size() - KEEP_RECENT);
-        for (ChatMessage msg : toCompact) {
-            String content = msg.getContent();
-            if (content != null && content.length() > 100) {
-                String toolName = (msg.isToolMessage() && msg.getToolName() != null)
-                        ? msg.getToolName() : extractToolNameFromContent(content);
-                String summary = String.format("[Previous: used %s]", toolName);
-                msg.setContent(summary);
-            }
-        }
-
-        return result;
-    }
-
-    private boolean isToolResultMessage(String content) {
-        if (content == null) return false;
-        // 工具成功或失败消息的特征前缀（兼容旧会话）
-        return content.startsWith("Tool '") || content.startsWith("Tool execution failed: ");
-    }
-
-    // 从消息内容中提取工具名称
-    // 格式示例: "Tool 'read_file' executed successfully ..." 或 "Tool execution failed: 'unknown_tool' not found."
-    private String extractToolNameFromContent(String content) {
-        try {
-            // 查找单引号之间的内容
-            int start = content.indexOf('\'');
-            int end = content.indexOf('\'', start + 1);
-            if (start != -1 && end != -1) {
-                return content.substring(start + 1, end);
-            }
-            // 降级处理：尝试匹配 "Tool execution failed: " 后的内容
-            if (content.startsWith("Tool execution failed: ")) {
-                String after = content.substring("Tool execution failed: ".length());
-                int space = after.indexOf(' ');
-                if (space > 0) {
-                    return after.substring(0, space);
+    /**
+     * 估算整段历史的 token 数（含 assistant 工具调用参数 arguments，否则阈值判断偏低）。
+     */
+    private int estimateTotalTokens(List<ChatMessage> messages) {
+        int total = 0;
+        for (ChatMessage m : messages) {
+            total += estimateTokens(m.getContent());
+            if (m.getToolCalls() != null) {
+                for (com.thoughtcoding.model.ToolCallRef r : m.getToolCalls()) {
+                    total += estimateTokens(r.getArguments());
                 }
-                return "unknown";
             }
-            return "unknown";
-        } catch (Exception e) {
-            return "unknown";
         }
+        return total;
     }
 
     /**
-     * 策略1：滑动窗口
-     * 保留最近 N 轮对话
-     */
-    private List<ChatMessage> applySlidingWindow(List<ChatMessage> fullHistory) {
-        int maxMessages = maxHistoryTurns * 2;  // 每轮包含用户+AI消息
-
-        if (fullHistory.size() <= maxMessages) {
-            return new ArrayList<>(fullHistory);
-        }
-
-        // 保留最近 N 条消息
-        int startIndex = fullHistory.size() - maxMessages;
-        return new ArrayList<>(fullHistory.subList(startIndex, fullHistory.size()));
-    }
-
-    /**
-     * 策略2：Token 控制
-     * 根据 Token 数量动态截断
-     */
-    private List<ChatMessage> applyTokenLimit(List<ChatMessage> fullHistory, List<ChatMessage> afterMicro) {
-        int totalTokens = 0;
-
-        for (int i = 0; i < afterMicro.size(); i++) {
-            ChatMessage msg = afterMicro.get(i);
-            int msgTokens = estimateTokens(msg.getContent());
-
-            totalTokens += msgTokens;
-        }
-
-        if (totalTokens < maxContextTokens) {
-            return afterMicro;
-        }
-
-        try {
-            // 1. 生成对话文本
-            // 精准切分：保留最后 2 条记录（通常是最后一轮 User 问 + AI 答）
-            int keepCount = Math.min(2, fullHistory.size());
-            int splitIndex = fullHistory.size() - keepCount;
-
-            List<ChatMessage> toSummarize = fullHistory.subList(0, splitIndex);
-            List<ChatMessage> tailMessages = new ArrayList<>(fullHistory.subList(splitIndex, fullHistory.size()));
-
-            String conversationText = truncateConversation(toSummarize);
-
-            // 2. 构建摘要 prompt
-            String prompt = "Summarize this conversation for continuity. Include: " +
-                    "1) What was accomplished, 2) Current state, 3) Key decisions made. " +
-                    "Be concise but preserve critical details.\n\n" + conversationText;
-
-            // 3. 调用 LLM 生成摘要
-            String summary = callLlmForSummary(prompt);
-
-            // 4. 构建压缩后的消息列表
-            String sessionId = afterMicro.get(0).getSessionId();
-            fullHistory.clear();
-
-            // 构建新的消息历史
-            fullHistory.add(new ChatMessage("user",
-                    "[Conversation compressed.]" + "\n\n" + summary, sessionId));
-
-            // 重新接上尾部对话，保证上下文连贯
-            fullHistory.addAll(tailMessages);
-
-            return fullHistory;
-        } catch (Exception e) {
-            return afterMicro;
-        }
-    }
-
-    /**
-     * 策略3：混合策略
-     * 先应用滑动窗口，再应用 Token 控制
-     */
-    private List<ChatMessage> applyHybridStrategy(List<ChatMessage> fullHistory, List<ChatMessage> afterMicro) {
-        // 1. 先应用滑动窗口
-        List<ChatMessage> windowedHistory = applySlidingWindow(fullHistory);
-
-        // 2. 再应用 Token 控制
-        return applyTokenLimit(windowedHistory, afterMicro);
-    }
-
-    /**
-     * 估算文本的 Token 数量
-     * 简单方法：中文 2 字符 ≈ 1 token，英文 4 字符 ≈ 1 token
-     *
-     * @param text 待估算的文本
-     * @return 估算的 token 数量
+     * 估算文本的 Token 数量：中文 2 字符 ≈ 1 token，英文 4 字符 ≈ 1 token。
      */
     private int estimateTokens(String text) {
         if (text == null || text.isEmpty()) {
@@ -430,7 +637,6 @@ public class ContextManager {
 
         int chineseChars = 0;
         int otherChars = 0;
-
         for (char c : text.toCharArray()) {
             if (isChinese(c)) {
                 chineseChars++;
@@ -438,49 +644,24 @@ public class ContextManager {
                 otherChars++;
             }
         }
-
-        // 中文：2 字符 ≈ 1 token
-        // 英文：4 字符 ≈ 1 token
         return (chineseChars / 2) + (otherChars / 4);
     }
 
-    /**
-     * 判断字符是否为中文
-     */
     private boolean isChinese(char c) {
         return c >= 0x4E00 && c <= 0x9FA5;
-    }
-
-    /**
-     * 截断文本到指定 Token 限制
-     */
-    private String truncateToTokenLimit(String text, int maxTokens) {
-        if (estimateTokens(text) <= maxTokens) {
-            return text;
-        }
-
-        // 简单截断：取前 N 个字符
-        int targetChars = maxTokens * 3;  // 保守估计
-        if (text.length() <= targetChars) {
-            return text;
-        }
-
-        return text.substring(0, targetChars) + "\n\n[内容过长已截断...]";
     }
 
     /**
      * 输出上下文统计信息
      */
     private void logContextStatistics(List<ChatMessage> fullHistory, List<ChatMessage> managedHistory) {
-        int fullTokens = fullHistory.stream()
-                .mapToInt(msg -> estimateTokens(msg.getContent()))
-                .sum();
+        if (!log.isDebugEnabled()) {
+            return;
+        }
+        int fullTokens = estimateTotalTokens(fullHistory);
+        int managedTokens = estimateTotalTokens(managedHistory);
 
-        int managedTokens = managedHistory.stream()
-                .mapToInt(msg -> estimateTokens(msg.getContent()))
-                .sum();
-
-        if (fullHistory.size() != managedHistory.size()) {
+        if (fullHistory.size() != managedHistory.size() || fullTokens != managedTokens) {
             log.debug("📊 上下文管理统计:");
             log.debug("  完整历史: {} 条消息 (~{} tokens)", fullHistory.size(), fullTokens);
             log.debug("  发送历史: {} 条消息 (~{} tokens)", managedHistory.size(), managedTokens);
@@ -491,7 +672,7 @@ public class ContextManager {
     }
 
     /**
-     * 将消息列表转换为 JSON 字符串（用于传给 LLM）
+     * 将消息列表序列化为 JSON 字符串（用于传给 LLM 摘要）。
      */
     private String truncateConversation(List<ChatMessage> messages) {
         try {
@@ -504,44 +685,5 @@ public class ContextManager {
     private String callLlmForSummary(String prompt) {
         ChatResponse response = ChatModel.chat(UserMessage.from(prompt));
         return response.aiMessage().text();
-    }
-
-    /**
-     * 获取当前策略
-     */
-    public Strategy getStrategy() {
-        return strategy;
-    }
-
-    /**
-     * 设置策略
-     */
-    public void setStrategy(Strategy strategy) {
-        this.strategy = strategy;
-        log.info("切换上下文策略为: {}", strategy);
-    }
-
-    /**
-     * 设置最大历史轮数（用于滑动窗口策略）
-     */
-    public void setMaxHistoryTurns(int maxHistoryTurns) {
-        this.maxHistoryTurns = maxHistoryTurns;
-        log.info("设置最大历史轮数: {} 轮", maxHistoryTurns);
-    }
-
-    /**
-     * 设置最大上下文 Token 数
-     */
-    public void setMaxContextTokens(int maxContextTokens) {
-        this.maxContextTokens = maxContextTokens;
-        log.info("设置最大上下文 Tokens: {}", maxContextTokens);
-    }
-
-    /**
-     * 获取配置摘要
-     */
-    public String getConfigSummary() {
-        return String.format("Strategy: %s, MaxTurns: %d, MaxTokens: %d",
-                strategy, maxHistoryTurns, maxContextTokens);
     }
 }
