@@ -362,9 +362,7 @@ public class ContextManager {
         List<ChatMessage> toolResults = new ArrayList<>();
         for (ChatMessage msg : work) {
             if (msg == null) continue;
-            boolean isNativeToolResult = msg.isToolMessage();
-            boolean isLegacyToolResult = "system".equals(msg.getRole()) && isToolResultMessage(msg.getContent());
-            if (isNativeToolResult || isLegacyToolResult) {
+            if (msg.isToolMessage()) {
                 toolResults.add(msg);
             }
         }
@@ -374,12 +372,6 @@ public class ContextManager {
     /** 是否为 L3 落盘后写入的 {@code <persisted-output>} 标记内容。 */
     private boolean isPersistedMarker(String content) {
         return content != null && content.startsWith("<persisted-output ");
-    }
-
-    private boolean isToolResultMessage(String content) {
-        if (content == null) return false;
-        // 工具成功或失败消息的特征前缀（兼容旧会话）
-        return content.startsWith("Tool '") || content.startsWith("Tool execution failed: ");
     }
 
     // 从消息内容中提取工具名称
