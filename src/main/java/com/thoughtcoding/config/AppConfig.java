@@ -290,6 +290,31 @@ public class AppConfig {
         @JsonProperty("maxToolIterations")
         private int maxToolIterations = 10; // agentic 循环单次用户输入内的最大工具轮次上限
 
+        // ── 四层上下文压缩管线参数（见 ContextManager）——全部有默认值，旧 config 不填也能跑 ──
+        @JsonProperty("maxContextTokens")
+        private int maxContextTokens = 48000; // L4：估算 token 超过则触发 LLM 摘要（DeepSeek ~64K 窗口留余量）
+
+        @JsonProperty("maxMessages")
+        private int maxMessages = 50; // L1：消息条数超过则裁中段（保留头尾）
+
+        @JsonProperty("snipKeepHead")
+        private int snipKeepHead = 3; // L1：保留最前 N 条
+
+        @JsonProperty("snipKeepTail")
+        private int snipKeepTail = 20; // L1：保留最近 N 条
+
+        @JsonProperty("keepRecentToolResults")
+        private int keepRecentToolResults = 3; // L2：仅最近 N 条工具结果保留全文
+
+        @JsonProperty("maxToolResultBytes")
+        private int maxToolResultBytes = 200000; // L3：当轮工具结果聚合预算（字节），这批总量超过才触发落盘
+
+        @JsonProperty("perResultPersistBytes")
+        private int perResultPersistBytes = 30000; // L3：单块落盘阈值，触发后只落单条超过此值的结果
+
+        @JsonProperty("l4KeepTail")
+        private int l4KeepTail = 6; // L4：摘要后接回的最近 N 条
+
         public boolean isAutoProcessToolResults() {
             return autoProcessToolResults;
         }
@@ -304,6 +329,70 @@ public class AppConfig {
 
         public void setMaxToolIterations(int maxToolIterations) {
             this.maxToolIterations = maxToolIterations;
+        }
+
+        public int getMaxContextTokens() {
+            return maxContextTokens;
+        }
+
+        public void setMaxContextTokens(int maxContextTokens) {
+            this.maxContextTokens = maxContextTokens;
+        }
+
+        public int getMaxMessages() {
+            return maxMessages;
+        }
+
+        public void setMaxMessages(int maxMessages) {
+            this.maxMessages = maxMessages;
+        }
+
+        public int getSnipKeepHead() {
+            return snipKeepHead;
+        }
+
+        public void setSnipKeepHead(int snipKeepHead) {
+            this.snipKeepHead = snipKeepHead;
+        }
+
+        public int getSnipKeepTail() {
+            return snipKeepTail;
+        }
+
+        public void setSnipKeepTail(int snipKeepTail) {
+            this.snipKeepTail = snipKeepTail;
+        }
+
+        public int getKeepRecentToolResults() {
+            return keepRecentToolResults;
+        }
+
+        public void setKeepRecentToolResults(int keepRecentToolResults) {
+            this.keepRecentToolResults = keepRecentToolResults;
+        }
+
+        public int getMaxToolResultBytes() {
+            return maxToolResultBytes;
+        }
+
+        public void setMaxToolResultBytes(int maxToolResultBytes) {
+            this.maxToolResultBytes = maxToolResultBytes;
+        }
+
+        public int getPerResultPersistBytes() {
+            return perResultPersistBytes;
+        }
+
+        public void setPerResultPersistBytes(int perResultPersistBytes) {
+            this.perResultPersistBytes = perResultPersistBytes;
+        }
+
+        public int getL4KeepTail() {
+            return l4KeepTail;
+        }
+
+        public void setL4KeepTail(int l4KeepTail) {
+            this.l4KeepTail = l4KeepTail;
         }
     }
 }
