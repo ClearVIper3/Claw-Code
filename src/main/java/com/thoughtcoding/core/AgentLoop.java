@@ -1,13 +1,14 @@
 package com.thoughtcoding.core;
 
 import com.thoughtcoding.config.AppConfig;
+import com.thoughtcoding.hook.HookContext;
+import com.thoughtcoding.hook.HookRegistry;
+import com.thoughtcoding.hook.HookResult;
 import com.thoughtcoding.model.ChatMessage;
 import com.thoughtcoding.model.ToolCall;
-import com.thoughtcoding.model.ToolExecution;
 import com.thoughtcoding.model.ToolResult;
 import com.thoughtcoding.service.PerformanceMonitor;
-import com.thoughtcoding.tool.PermissionGate;
-import com.thoughtcoding.tool.PermissionResult;
+import com.thoughtcoding.tool.PermissionHook;
 import com.thoughtcoding.tool.ToolDispatcher;
 
 import java.util.ArrayList;
@@ -27,6 +28,7 @@ public class AgentLoop {
     private final String modelName;
     private final ToolExecutionConfirmation confirmation;  // 交互式确认组件
     private final ToolDispatcher toolDispatcher;
+    private final HookRegistry hookRegistry;               // 基于注册表的 Hook 系统
 
     // 缓存本轮模型请求的工具调用（原生路径一轮可能有多个）
     private final List<ToolCall> pendingToolCalls = new ArrayList<>();
@@ -42,6 +44,13 @@ public class AgentLoop {
             context.getUi().getLineReader()
         );
         this.toolDispatcher = new ToolDispatcher(context.getToolRegistry());
+
+        // 一开始先注册四种 hook 时机（动作由业务方按需 register 追加）
+        this.hookRegistry = new HookRegistry();
+
+        // 将权限检查注册为 PRE_TOOL_USE 的 hook 动作
+        this.hookRegistry.register(com.thoughtcoding.hook.HookType.PRE_TOOL_USE,
+                new PermissionHook(this.confirmation));
 
         // 设置消息和工具调用处理器
         context.getAiService().setMessageHandler(this::handleMessage);
@@ -60,6 +69,11 @@ public class AgentLoop {
 
         try {
             pendingToolCalls.clear();
+
+            // ── Hook: UserPromptSubmit（进入 LLM 前）—— BLOCK 则跳过本轮 ──
+            HookResult promptResult = hookRegistry.fire(
+                    HookContext.forUserPrompt(context, history, input));
+
             history.add(new ChatMessage("user", input));
 
             // 原生 function calling：多轮 agentic 循环
@@ -102,6 +116,8 @@ public class AgentLoop {
             context.getUi().getTerminal().flush();
 
             if (pendingToolCalls.isEmpty()) {
+                // ── Hook: Stop（循环即将退出）──
+                hookRegistry.fire(HookContext.forStop(context, history));
                 break; // 模型只产出文本 → 自然终止
             }
 
@@ -116,36 +132,24 @@ public class AgentLoop {
                     continue;
                 }
 
-                // ── 权限决策：DENY → 拒绝 | WARN → 确认 | ALLOW → 放行 ──
-                PermissionResult perm = PermissionGate.check(
-                    call.getToolName(), call.getParameters());
-
-                if (perm.type() == PermissionResult.Type.DENY) {
-                    context.getUi().displayError(perm.message());
+                // ── Hook: PreToolUse（工具执行前）—— 权限检查 + 自定义动作 ──
+                // PermissionHook 已注册在此时机：DENY → BLOCK，WARN → 弹确认
+                HookResult preResult = hookRegistry.fire(
+                        HookContext.forPreTool(context, history, call));
+                if (preResult.isBlocked()) {
+                    String msg = preResult.message() != null ? preResult.message() : "工具执行被阻止。";
+                    context.getUi().displayError(msg);
                     history.add(ChatMessage.toolResult(
-                        call.getProviderCallId(), call.getToolName(), perm.message()));
+                        call.getProviderCallId(), call.getToolName(), msg));
                     continue;
-                }
-
-                if (perm.type() == PermissionResult.Type.WARN
-                    && !confirmation.isAutoApproveMode()) {
-                    ToolExecution exec = new ToolExecution(
-                            call.getToolName(),
-                            call.getDescription() != null ? call.getDescription() : "执行工具操作",
-                            call.getParameters(),
-                            true);
-                    ToolExecutionConfirmation.ActionType action = confirmation.askConfirmationWithOptions(exec);
-                    if (action == ToolExecutionConfirmation.ActionType.NO) {
-                        context.getUi().displayWarning("⏭️  已取消：" + describeTool(call));
-                        history.add(ChatMessage.toolResult(call.getProviderCallId(), call.getToolName(),
-                                "用户拒绝执行该工具。"));
-                        stop = true;
-                        continue;
-                    }
                 }
 
                 // 执行并把结果按 id 配对写回 history
                 ToolResult result = toolDispatcher.dispatch(call);
+
+                // ── Hook: PostToolUse（工具执行后）──
+                hookRegistry.fire(HookContext.forPostTool(context, history, call, result));
+
                 displayNativeToolResult(call, result);
                 // 工具结果显示后空一行，避免与下一轮 AI 流式文本挤在同一区域
                 context.getUi().getTerminal().writer().println();
