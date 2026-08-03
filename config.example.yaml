@@ -16,6 +16,15 @@ defaultModel: deepseek-chat
 ai:
   autoProcessToolResults: true  # true=工具结果自动回喂模型，形成 agentic 多轮循环
   maxToolIterations: 10         # 单次用户输入内的最大工具轮次上限
+  # —— 四层上下文压缩管线（顺序：L3落盘 → L1裁中段 → L2旧结果占位 → L4摘要）——
+  maxContextTokens: 48000       # L4：估算 token 超过则 LLM 摘要旧历史（DeepSeek ~64K 窗口留余量）
+  maxMessages: 50               # L1：消息条数超过则裁中段（保留头尾）
+  snipKeepHead: 3               # L1：保留最前 N 条
+  snipKeepTail: 20              # L1：保留最近 N 条
+  keepRecentToolResults: 3      # L2：仅最近 N 条工具结果保留全文，更旧的换占位
+  maxToolResultBytes: 200000    # L3：当轮工具结果聚合预算（字节），这批总量超过才触发落盘（单次大 read 落在预算内不受影响）
+  perResultPersistBytes: 30000  # L3：触发后只落盘单条超过此字节数的结果，留标记+预览+磁盘路径
+  l4KeepTail: 6                 # L4：摘要后接回的最近 N 条
 
 tools:
   bash:

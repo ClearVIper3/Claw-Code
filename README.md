@@ -14,21 +14,24 @@
 
 - **智能对话** - 基于多种 AI 模型的智能代码助手
 - **流式输出** - 支持实时流式响应，提供更好的交互体验
-- **原生 Function Calling** - 基于 LangChain4j 原生 function calling 的多轮 agentic 循环
+- **原生 Function Calling** - 基于 LangChain4j 原生 function calling 的多轮 agentic 循环（工具结果按 `providerCallId` 自动配对回喂）
 - **MCP 集成** - 内置 Model Context Protocol 支持，可连接丰富的工具生态系统
 - **工具扩展** - 通过 MCP 支持文件管理、数据库操作、搜索、GitHub 等 50+ 种工具
 - **动态工具发现** - 自动发现和注册 MCP 服务器的可用工具
 - **即插即用** - 无需重启即可动态连接新的 MCP 服务器
 - **预定义工具** - 内置常用 MCP 工具快捷方式，一键连接
+- **技能系统** - 内置 6 个技能（docx/pdf/pptx/xlsx/mcp-builder/skill-creator），模型可按需加载 `SKILL.md` 完整说明
+- **子代理** - `subAgent` 工具派发隔离的子 Agent 执行独立子任务，仅回传最终结论
+- **统一权限管道** - `PermissionGate` 收敛写/执行类工具的执行决策，越界只读操作弹确认，危险命令硬拒绝
 - **配置管理** - 灵活的 YAML 配置文件系统，支持 MCP 服务器动态配置
 - **类型安全** - 完整的 Java 类型定义和封装
 - **终端 UI** - 基于 JLine + ANSI 颜色的现代化终端界面
 - **会话管理** - 会话保存、加载和会话继续功能
-- **上下文管理** - 智能上下文窗口管理，Token 优化，支持滑动窗口策略
+- **上下文管理** - 四层压缩管线（落盘 / 裁中段 / 旧结果占位 / LLM 摘要），防止 Token 超限
 - **项目感知** - 自动检测项目类型（Maven/Gradle/NPM），提供项目上下文
-- **工具确认** - 工具执行前用户确认机制，只读工具静默放行，提高安全性
+- **工具确认** - 写/执行类工具执行前用户确认，只读工具在 workspace 内静默放行、越界弹确认
 - **性能监控** - 内置性能监控和 Token 使用统计
-- **智能搜索** - 具备文件搜索和文件内容搜索能力
+- **智能搜索** - 文件名搜索（glob）+ 文件内容搜索（bash 内的 grep/rg）
 - **跨平台支持** - 支持 Windows、Linux、macOS 系统
 
 ## 🏗项目结构
@@ -42,28 +45,46 @@ ThoughtCoding/
 │   │   ├── ConfigCommand.java           # 配置管理命令
 │   │   └── MCPCommand.java              # MCP 管理命令
 │   ├── 📁 core/                         # 🔧 核心功能
-│   │   ├── ThoughtCodingContext.java    # 应用上下文
+│   │   ├── ThoughtCodingContext.java    # 应用上下文（依赖注入容器）
 │   │   ├── AgentLoop.java               # Agent 循环引擎（原生 function calling）
-│   │   ├── StreamingOutput.java         # 流式输出处理
+│   │   ├── SubAgent.java                # 子代理（隔离子任务）
 │   │   ├── ProjectContext.java          # 项目上下文检测
 │   │   ├── ToolExecutionConfirmation.java # 工具执行确认（YES/NO 两选项）
-│   │   └── DirectCommandExecutor.java   # 直接命令执行器
+│   │   └── DirectCommandExecutor.java   # 直接命令执行器（/ 斜杠命令）
 │   ├── 📁 service/                      # 🛠️ 服务层
 │   │   ├── LangChainService.java        # AI 服务核心
 │   │   ├── SessionService.java          # 会话数据管理
 │   │   ├── AIService.java               # AI 服务接口
 │   │   ├── ContextManager.java          # 上下文管理器（历史窗口、Token控制）
 │   │   └── PerformanceMonitor.java      # 性能监控
-│   ├── 📁 tools/                        # 🔨 工具集合（扁平结构）
-│   │   ├── BaseTool.java                # 工具基类（name/description/schema/isReadOnly）
+│   ├── 📁 tool/                         # 🔨 工具层
+│   │   ├── BaseTool.java                # 工具抽象基类（name/description/execute）
 │   │   ├── ToolRegistry.java            # 工具注册中心
-│   │   ├── ToolDispatcher.java          # 工具执行唯一收口（沙箱插桩点）
-│   │   ├── ToolSpecificationFactory.java # ToolSpecification 工厂（内置+MCP统一转换）
-│   │   ├── BashTool.java                # 命令执行（Windows→PowerShell, Linux/Mac→bash）
-│   │   ├── ReadTool.java                # 文件读取（cat -n 风格行号输出）
-│   │   ├── WriteTool.java               # 文件创建/覆写
-│   │   ├── EditTool.java                # 精确字符串替换（\r\n 自动规范化）
-│   │   └── GlobTool.java                # 文件搜索（walkFileTree，跳过 node_modules）
+│   │   ├── ToolDispatcher.java          # 工具执行收口（查表 + 参数序列化）
+│   │   ├── ToolSpecificationFactory.java # BaseTool → ToolSpecification 转换（三级降级）
+│   │   └── 📁 tools/                     # 内置工具实现
+│   │       ├── BashTool.java            # 命令执行（Windows→PowerShell, Linux/Mac→bash）
+│   │       ├── ReadTool.java            # 文件读取（cat -n 风格行号输出）
+│   │       ├── WriteTool.java           # 文件创建/覆写
+│   │       ├── EditTool.java            # 精确字符串替换（\r\n 自动规范化）
+│   │       ├── GlobTool.java            # 文件名搜索（walkFileTree，跳过 node_modules）
+│   │       ├── TodoWriteTool.java       # 内存待办清单（跨调用状态）
+│   │       ├── SkillTool.java           # 加载 skills/*/SKILL.md
+│   │       └── SubAgentTool.java        # 派发隔离子 Agent
+│   ├── 📁 security/                     # 🔐 权限与沙箱
+│   │   ├── PermissionGate.java          # 统一权限管道（按工具名决策 ALLOW/WARN/DENY）
+│   │   ├── PermissionHook.java          # 把权限检查挂进 Hook 链（PRE_TOOL_USE）
+│   │   ├── PermissionResult.java        # 权限决策结果
+│   │   └── Sandbox.java                # 工作区路径解析（仅规范化，不拦截越界）
+│   ├── 📁 hook/                         # 🪝 Hook 系统（可扩展拦截点）
+│   │   ├── Hook.java / HookContext.java # Hook 接口与上下文
+│   │   ├── HookRegistry.java            # Hook 责任链注册表
+│   │   ├── HookResult.java              # Hook 返回（PROCEED/BLOCK/…）
+│   │   └── HookType.java               # 钩子时机（UserPromptSubmit/PreToolUse/PostToolUse/Stop）
+│   ├── 📁 skill/                        # 🎯 技能注册
+│   │   └── SkillRegistry.java           # 启动时扫描 skills/ 并解析 SKILL.md
+│   ├── 📁 exception/                    # 异常定义
+│   │   └── WorkspaceSecurityException.java
 │   ├── 📁 mcp/                          # 🔌 MCP 功能模块
 │   │   ├── MCPService.java              # MCP 服务管理器
 │   │   ├── MCPClient.java               # MCP 客户端
@@ -83,6 +104,7 @@ ThoughtCoding/
 │   │       ├── InputHandler.java        # 输入处理器
 │   │       ├── ProgressIndicator.java   # 进度指示器
 │   │       └── StatusBar.java           # 状态栏
+│   │   └── 📁 themes/                    # ColorScheme 颜色方案
 │   ├── 📁 config/                       # ⚙️ 配置管理
 │   │   ├── AppConfig.java               # 应用配置
 │   │   ├── ConfigLoader.java            # 配置加载器
@@ -96,7 +118,8 @@ ThoughtCoding/
 │   │   ├── ToolCallRef.java             # 工具调用引用
 │   │   ├── ToolExecution.java           # 工具执行记录
 │   │   ├── ToolResult.java              # 工具结果
-│   │   └── ModelConfig.java             # 模型配置
+│   │   ├── ModelConfig.java             # 模型配置
+│   │   └── SubagentTurn.java           # 子代理往返记录
 │   └── 📁 util/                         # 🛠️ 工具类
 │       ├── JsonUtils.java               # JSON 工具
 │       ├── FileUtils.java               # 文件工具
@@ -105,8 +128,10 @@ ThoughtCoding/
 ├── 📁 bin/                              # 🚀 启动脚本
 │   ├── thought                         # Linux/macOS 脚本
 │   └── thought.bat                     # Windows 脚本
+├── 📁 skills/                          # 🎯 内置技能（docx/pdf/pptx/xlsx/mcp-builder/skill-creator）
 ├── 📁 sessions/                         # 💾 会话存储
 ├── 📜 pom.xml                          # Maven 配置
+├── 📜 config.example.yaml              # 配置模板（复制为 config.yaml）
 └── 📖 README.md                        # 项目说明
 ```
 
@@ -203,17 +228,17 @@ ThoughtCoding/
 `ThoughtCodingContext.java`
 
 - **功能**：应用上下文容器（依赖注入）
-- **特性**：统一管理所有服务组件，提供全局访问入口
+- **特性**：统一管理所有服务组件，提供全局访问入口；启动时在此注册全部内置工具
 
 `AgentLoop.java`
 
 - **功能**：Agent 循环引擎
-- **特性**：基于 LangChain4j 原生 function calling 实现多轮 agentic 循环，工具结果自动回喂模型，支持工具执行确认
+- **特性**：基于 LangChain4j 原生 function calling 的多轮 agentic 循环；模型请求工具 → `HookRegistry.fire(PRE_TOOL_USE)` 权限检查 → `ToolDispatcher` 执行 → 结果按 `providerCallId` 配对回喂 → 无新工具时终止，或达到 `maxToolIterations` 上限
 
-`StreamingOutput.java`
+`SubAgent.java`
 
-- **功能**：流式输出处理类
-- **特性**：Token-by-Token 实时输出，优化用户体验
+- **功能**：子代理
+- **特性**：用隔离的对话历史执行单一切片任务，看不到主对话；通过 `LangChainService.chatOnceForSubagent` 调用（已过滤掉 `subAgent` 工具自身，防递归），结果仅回传最终结论
 
 `ProjectContext.java`
 
@@ -223,12 +248,12 @@ ThoughtCoding/
 `ToolExecutionConfirmation.java`
 
 - **功能**：工具执行确认组件
-- **特性**：写/执行类工具执行前展示工具名和参数，YES/NO 两选项确认；只读工具（read、glob）静默放行
+- **特性**：写/执行类工具（write/edit/bash）执行前展示工具名和参数，YES/NO 两选项确认；read/glob 仅在路径越出 workspace 时弹确认；todo_write/skill/subAgent 恒静默放行；bash 另受 10 条 `BASH_DENY_PATTERNS` 硬拒绝模式直接 DENY
 
 `DirectCommandExecutor.java`
 
-- **功能**：直接命令执行器
-- **特性**：支持直接执行系统命令，无需通过工具调用
+- **功能**：直接命令执行器（处理 `/` 斜杠命令）
+- **特性**：支持直接执行系统命令；注意它自建 `BashTool` 实例，不经过 `ToolDispatcher`/`HookRegistry`/`PermissionGate`，因此直接命令路径无确认弹框与拒绝模式拦截
 
 ### `src/main/java/com/thoughtcoding/service/` - 服务层
 
@@ -243,43 +268,75 @@ ThoughtCoding/
 - `AIService.java` - AI 服务接口
   - **特性**：定义统一的 AI 服务接口，支持多模型切换
 - `ContextManager.java` - 上下文管理器
-  - **特性**：管理对话历史窗口，控制 Token 使用，实现滑动窗口策略
+  - **特性**：四层压缩管线（顺序严格：L3 单条巨型工具结果落盘 → L1 消息数超限裁中段 → L2 旧工具结果占位 → L4 超 token 阈值则 LLM 摘要），配 `sanitizeToolPairs` 兜底工具配对，防止模型返回 400
 - `PerformanceMonitor.java` - 性能监控
   - **特性**：Token 使用统计、执行时间监控、性能指标收集
 
-### `src/main/java/com/thoughtcoding/tools/` - 工具集合
+### `src/main/java/com/thoughtcoding/tool/` - 工具层
 
-**功能**: 内置工具的实现，统一继承 `BaseTool` 基类。
+**功能**: 内置工具的实现（4 个基础设施类在 `tool/`，8 个内置工具在 `tool/tools/`，统一继承 `BaseTool`）。
 
 `BaseTool.java`
 
 - **功能**：工具抽象基类
-- **特性**：定义 `name`、`description`、`inputSchema()`、`isReadOnly()` 等标准接口；`execute(String)` 接收 JSON 参数
+- **特性**：固定 `name`、`description` 两个字段与唯一抽象方法 `execute(String input)`（入参恒为 JSON 字符串）；提供两个可覆写 schema 钩子 `inputSchema()`（langchain4j `JsonObjectSchema`，内置工具用）与 `getInputSchema()`（原始 JSON schema，MCP 工具用），以及 success/error 四个 `ToolResult` 工厂重载。**没有 `isReadOnly()` 方法**——只读判定由 `AgentLoop.QUIET_OUTPUT_TOOLS` 与 `PermissionGate` 两处硬编码集合决定
 
 `ToolRegistry.java`
 
 - **功能**：工具注册中心
-- **特性**：统一管理内置工具与 MCP 工具，提供按名查找和 ToolSpecification 列表生成
+- **特性**：`register(BaseTool)` 按 `tools.<name>.enabled` 开关过滤；`getToolSpecifications()` 在每次请求时遍历已启用工具生成 `ToolSpecification` 列表（含运行期连接的 MCP 工具），单个转换失败则静默跳过
 
 `ToolDispatcher.java`
 
-- **功能**：工具执行唯一收口
-- **特性**：所有工具调用经此分发，作为沙箱插桩点（未来 workspace 边界检查在此一处即可覆盖 100% 写/执行操作）
+- **功能**：工具执行收口
+- **特性**：原生 function calling 与 MCP 工具的执行收口（查表 → Jackson 序列化参数 → `execute(JSON)`）；自身不做 try/catch、不做权限决策。权限由 `AgentLoop` 的 `HookRegistry.fire(PRE_TOOL_USE)` → `PermissionHook` → `PermissionGate.check` 完成。例外：`DirectCommandExecutor` 自建 `BashTool` 实例、不经过本收口
 
 `ToolSpecificationFactory.java`
 
-- **功能**：将 BaseTool 转换为 LangChain4j 原生 ToolSpecification
-- **特性**：内置工具用 `inputSchema()` 自带 schema，MCP 工具从原始 JSON schema 转换，失败时兜底通用 schema
+- **功能**：将 `BaseTool` 转换为 langchain4j 原生 `ToolSpecification`
+- **特性**：三级降级——① `inputSchema()` 非 null 直接用；② 否则 `fromRawSchema(getInputSchema())` 转 MCP 原始 schema；③ 仍 null 则 `genericSchema()` 兜底为 `{input: string}`。MCP 的 array/object 参数会在此被降级为 string
 
-**内置工具**:
+**内置工具**（均通过 `ToolRegistry` 暴露给模型）：
 
-- **BashTool** - 命令执行，Windows 自动切换 PowerShell，Linux/Mac 使用 bash
-- **ReadTool** - 文件读取，`cat -n` 风格带行号输出，只读工具无需确认
-- **WriteTool** - 文件创建/覆写，自动创建父目录
-- **EditTool** - 精确字符串替换，自动规范化 `\r\n` → `\n`（兼容 Windows 文件）
-- **GlobTool** - 文件搜索，基于 `walkFileTree` 跨平台实现，跳过 `node_modules`，只读工具无需确认
+| 工具 | 能力 | 参数 / 关键常量 | 注意事项 |
+|------|------|----------------|----------|
+| `bash` | 命令执行；Windows→PowerShell，Linux/Mac→bash | `command`（必填），`timeout`（秒，默认 30） | 10 条 `BASH_DENY_PATTERNS` 硬拒绝模式直接 DENY；Windows 走 `powershell -EncodedCommand`，单行输出受 `Out-String -Width 300` 截断 |
+| `read` | 文件读取，`cat -n` 风格带行号 | `path`、`offset`、`limit`（默认 2000 行）；`maxFileSize` 默认 10 MB | workspace 内静默放行，越界弹确认；结果不 dump 到终端但全量回喂模型 |
+| `write` | 文件创建/覆写，自动建父目录 | `path`、`content` | 无任何大小上限；仅 workspace 内弹确认 |
+| `edit` | 精确字符串替换 | `path`、`old_string`、`new_string` | 自动规范化 `\r\n`→`\n`（Windows 上整文件行尾会被改写）；越界弹确认 |
+| `glob` | 文件名搜索，`walkFileTree` | `pattern`；`MAX_RESULTS=250`、`MAX_DEPTH=20`、跳过 `node_modules/.git/.svn/.hg` | workspace 内静默放行；无匹配返回 success 而非 error |
+| `todo_write` | 内存待办清单（跨调用状态） | `todos` 数组 | 仅存内存、进程退出即丢，不进会话持久化；恒静默放行 |
+| `skill` | 加载 `skills/*/SKILL.md` | `name`（enum 约束，仅限已扫描到的技能名） | `skills/` 目录非空时才注册；结果不 dump 但回喂 |
+| `subAgent` | 派发隔离子 Agent 执行子任务 | `description`、`prompt`、`subagentType` | 过滤自身 spec 防递归；结论回传主循环，过程不 dump |
 
-**扩展性**: 继承 `BaseTool` 并注册到 `ToolRegistry` 即可添加新工具。
+**扩展性**：① 继承 `BaseTool`（覆写 `execute` + `inputSchema`）→ ② 在 `ThoughtCodingContext.initialize()` 里 `register` → ③ 在 `PermissionGate.check` 补一条 `case` 定权限；若是大输出只读工具，还需加进 `AgentLoop.QUIET_OUTPUT_TOOLS` 以免刷屏。`ToolDispatcher` 不捕获异常，工具抛出的运行时异常会破坏 call/result 配对、导致后续请求 400，故工具须自行兜底。注：新工具无法通过 `config.yaml` 关闭（`isToolEnabled` 的 switch 只覆盖 bash/read/write/edit/glob）。
+
+### `src/main/java/com/thoughtcoding/security/` - 权限与沙箱
+
+**功能**：工具执行前的统一权限决策层，是工具层唯一的安全防线。
+
+`PermissionGate.java`
+
+- **功能**：统一权限管道
+- **特性**：`check` 按工具名 switch 决策 `ALLOW`/`WARN`/`DENY`——write/edit/bash 固定 WARN（弹确认），read/glob 越界才 WARN，todo_write/skill/subAgent 恒 ALLOW，未知工具 WARN；bash 先过 `BASH_DENY_PATTERNS` 硬 DENY。注意 `Sandbox.resolve` 仅做路径规范化、**不拦截越界**，写操作可落在 workspace 之外
+
+`PermissionHook.java` / `PermissionResult.java`
+
+- **功能**：把权限检查挂进 Hook 链的 PRE_TOOL_USE 时机，承载决策结果
+
+`Sandbox.java`
+
+- **功能**：工作区路径解析
+- **特性**：规范化 `~`/`..`/相对路径；绝对路径原样返回，`../` 可 normalize 逃出 workspace（边界约束在 `PermissionGate` 而非此处）
+
+### `src/main/java/com/thoughtcoding/hook/` - Hook 系统
+
+**功能**：可扩展的拦截点责任链，权限确认的实际承载机制。
+
+- `HookType.java`：钩子时机（UserPromptSubmit / PreToolUse / PostToolUse / Stop）
+- `HookRegistry.java`：`fire(context)` 串行执行已注册 Hook，命中 BLOCK 即短路
+- `HookContext.java` / `HookResult.java`：钩子上下文与返回（PROCEED / BLOCK / …）
+- `Hook.java`：Hook 接口。业务方可按需 `register` 追加自定义动作（权限检查即作为 PreToolUse 的一环注册）
 
 ### `src/main/java/com/thoughtcoding/mcp/` - MCP 功能
 
@@ -348,31 +405,37 @@ ThoughtCoding/
 
 ## ⚙ 配置说明
 
-### 配置文件 (`src/main/resources/config.yaml`)
+### 配置文件 (`config.example.yaml` → 复制为 `config.yaml`)
 
 ```yaml
 # ThoughtCoding 配置模板
-# 用法：复制为 config.yaml（已被 .gitignore 忽略），填入你的 API Key。
-# 注意：本项目使用 langchain4j 原生 function calling，必须使用支持 function calling 的模型。
+# 用法：复制为 config.yaml（config.yaml 已被 .gitignore 忽略，不会提交），填入你的 API Key。
+# 注意：本项目使用 langchain4j 原生 function calling，必须使用【支持 function calling 的】模型。
 
 models:
-  deepseek-v4-pro:
-    name: "deepseek-v4-pro"
-    baseURL: "https://api.deepseek.com"
-    apiKey: "your-api-key-here"
+  deepseek-chat:
+    name: deepseek-chat                     # ← 换成你账号下支持 function calling 的模型
+    baseURL: https://api.deepseek.com/v1
+    apiKey: YOUR_DEEPSEEK_API_KEY_HERE       # ← 填入你的 API Key
     streaming: true
     maxTokens: 4096
-    temperature: 0
+    temperature: 0.7
 
-# 默认模型
-defaultModel: "deepseek-v4-pro"
+defaultModel: deepseek-chat
 
-# AI 行为配置
 ai:
   autoProcessToolResults: true  # true=工具结果自动回喂模型，形成 agentic 多轮循环
   maxToolIterations: 10         # 单次用户输入内的最大工具轮次上限
+  # —— 四层上下文压缩管线（顺序：L3落盘 → L1裁中段 → L2旧结果占位 → L4摘要）——
+  maxContextTokens: 48000       # L4：估算 token 超过则 LLM 摘要旧历史（DeepSeek ~64K 窗口留余量）
+  maxMessages: 50               # L1：消息条数超过则裁中段（保留头尾）
+  snipKeepHead: 3               # L1：保留最前 N 条
+  snipKeepTail: 20              # L1：保留最近 N 条
+  keepRecentToolResults: 3      # L2：仅最近 N 条工具结果保留全文，更旧的换占位
+  maxToolResultBytes: 200000    # L3：当轮工具结果聚合预算（字节），这批总量超过才触发落盘（注：运行时被覆写为 maxContextTokens/2）
+  perResultPersistBytes: 30000  # L3：触发后只落盘单条超过此字节数的结果，留标记+预览+磁盘路径
+  l4KeepTail: 6                 # L4：摘要后接回的最近 N 条
 
-# 工具配置
 tools:
   bash:
     enabled: true
@@ -397,15 +460,9 @@ mcp:
       args:
         - "@modelcontextprotocol/server-filesystem"
         - "."
-
-    - name: "github"
-      command: "npx"
-      enabled: false
-      args:
-        - "@modelcontextprotocol/server-github"
-        - "--token"
-        - "your_github_token_here"
 ```
+
+> 注意：`config.example.yaml` 在仓库根目录，**不是** `src/main/resources/`。运行用的真实文件是仓库根的 `config.yaml`（已被 `.gitignore` 忽略，不会提交）。
 
 ### 配置项说明
 
@@ -422,13 +479,16 @@ mcp:
 - `ai` : AI 行为配置
   - `autoProcessToolResults`: 工具结果是否自动回喂模型继续对话
   - `maxToolIterations`: 单次用户输入内最大工具调用轮次
+  - `maxContextTokens` / `maxMessages` / `snipKeepHead` / `snipKeepTail` / `keepRecentToolResults` / `perResultPersistBytes` / `l4KeepTail`: 四层压缩管线参数
+  - `maxToolResultBytes`: L3 当轮工具结果聚合预算（**注：运行时会覆写为 `maxContextTokens / 2`，配置此值当前不生效**）
 
-- `tools` : 内置工具配置
-  - `bash`: 命令执行工具（Windows→PowerShell, Linux/Mac→bash）
-  - `read`: 文件读取工具（只读，无需确认）
-  - `write`: 文件创建/覆写工具
-  - `edit`: 精确字符串替换工具（自动规范化 `\r\n`）
-  - `glob`: 文件搜索工具（只读，无需确认）
+- `tools` : 内置工具配置（开关覆盖范围见下方说明）
+  - `bash`: 命令执行工具；可选 `timeoutSeconds`（默认 30 秒，模型可用 `timeout` 参数逐次覆盖）
+  - `read`: 文件读取工具（workspace 内静默放行，越界弹确认）；可选 `maxFileSize`，默认 10485760 字节（10 MB）
+  - `write`: 文件创建/覆写工具（仅 workspace 内弹确认，无大小上限）
+  - `edit`: 精确字符串替换工具（自动规范化 `\r\n`；越界弹确认）
+  - `glob`: 文件名搜索工具（workspace 内静默放行，越界弹确认）
+  - **开关覆盖范围与无效字段**：`ToolRegistry.isToolEnabled` 的 switch 只覆盖 bash/read/write/edit/glob 五个名字，todo_write/skill/subAgent 与全部 MCP 工具无法经 `config.yaml` 关闭。`AppConfig.ToolConfig` 的 `allowedCommands`/`allowedLanguages` 字段为死配置（无任何读取点），实际不生效
 
 - `mcp` : MCP 功能配置
   - `enabled`: 是否启用 MCP 功能模块
@@ -459,19 +519,19 @@ git clone https://github.com/zengxinyueooo/ThoughtCoding.git
 
 ### 配置 API
 
-将 `src/main/resources/config.yaml` 复制到项目根目录为 `config.yaml`，编辑并填入你的 API Key。
+将 `config.example.yaml` 复制到项目根目录为 `config.yaml`，编辑并填入你的 API Key。
 
 #### **Linux/macOS**
 
 ```
-cp src/main/resources/config.yaml config.yaml
+cp config.example.yaml config.yaml
 # 编辑 config.yaml，填入你的 API 密钥
 ```
 
 #### **Windows**
 
 ```
-copy src\main\resources\config.yaml config.yaml
+copy config.example.yaml config.yaml
 # 编辑 config.yaml，填入你的 API 密钥
 ```
 
@@ -553,16 +613,34 @@ cd ThoughtCoding
 /mcp tools redis,docker  # 快捷连接预定义工具
 ```
 
+### 🎯 技能系统
+
+启动时 `SkillRegistry` 自动扫描仓库根 `skills/` 目录，解析每个 `SKILL.md` 的 frontmatter 生成技能目录，常驻注入系统提示。模型在需要时会调用 `skill` 工具按名加载完整说明后再执行。
+
+内置 6 个技能：
+
+| 技能 | 能力 |
+|------|------|
+| `docx` | 生成/编辑 Word 文档 |
+| `pdf` | 生成/填充/拆分 PDF |
+| `pptx` | 生成 PowerPoint 演示文稿 |
+| `xlsx` | 生成/编辑 Excel 表格 |
+| `mcp-builder` | 引导创建新的 MCP 服务器 |
+| `skill-creator` | 引导创建新的技能 |
+
+> 注意：`skills/` 为空时 `skill` 工具不会被注册（模型工具列表里就没有它）；新增技能需在启动时放置到 `skills/`，运行期新增不被识别。
+
 ## 🔧 开发指南
 
-### 在 `src/main/java/com/thoughtcoding/tools/` 目录下创建新工具
+### 在 `src/main/java/com/thoughtcoding/tool/tools/` 目录下创建新工具
 
 继承 `BaseTool` 基类并实现核心方法：
 
 ```java
-package com.thoughtcoding.tool;
+package com.thoughtcoding.tool.tools;
 
 import com.thoughtcoding.model.ToolResult;
+import com.thoughtcoding.tool.BaseTool;
 import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
 
 public class MyTool extends BaseTool {
@@ -573,8 +651,9 @@ public class MyTool extends BaseTool {
 
     @Override
     public ToolResult execute(String input) {
-        // input 为 JSON 字符串，从 ToolDispatcher 传入
-        // 工具实现逻辑
+        // input 为 JSON 字符串，从 ToolDispatcher 经 Jackson 反序列化后传入
+        // ⚠️ ToolDispatcher 不捕获异常：工具抛出的运行时异常会破坏 call/result 配对、
+        //    导致下一次请求 400。请在此自行兜底（try/catch 后返回 error(...））。
         return success("工具执行结果");
     }
 
@@ -585,20 +664,18 @@ public class MyTool extends BaseTool {
                 .addStringProperty("param1", "参数1描述")
                 .build();
     }
-
-    @Override
-    public boolean isReadOnly() {
-        // 只读工具返回 true，静默放行无需用户确认
-        return false;
-    }
 }
 ```
 
-在 `ThoughtCodingContext.java` 中注册新工具：
+在 `ThoughtCodingContext.initialize()` 中注册新工具：
 
 ```java
 toolRegistry.register(new MyTool());
 ```
+
+**注意事项**：
+- BaseTool 没有 `isReadOnly()` 方法。新增只读工具需手动两处：① 把工具名加进 `AgentLoop.QUIET_OUTPUT_TOOLS`（控制终端是否 dump 结果）；② 在 `PermissionGate.check` 的 switch 补一条 `case` 决定 ALLOW/WARN（否则落到 `default` 每次弹确认）。
+- 若想支持 `config.yaml` 关闭新工具，需同时在 `ToolRegistry.isToolEnabled` 的 switch 补 `case`（目前只覆盖 bash/read/write/edit/glob）。
 
 ### 使用类型定义
 

@@ -28,7 +28,7 @@ ThoughtCoding 是一个**企业级 AI 编程助手 CLI 工具**，基于 Model C
 | 层次 | 技术选型 | 说明 |
 |------|---------|------|
 | **开发语言** | Java 17 | 企业级稳定性、强类型系统 |
-| **AI框架** | LangChain4j | Java生态的AI编排框架 |
+| **AI框架** | LangChain4j 1.10 | 原生 function calling（ToolSpecification / JsonObjectSchema）|
 | **大模型** | DeepSeek、通义千问 | 高性价比的中文大模型 |
 | **CLI框架** | Picocli | 声明式命令行解析 |
 | **终端UI** | JLine 3 | 现代化终端交互 |
@@ -42,77 +42,89 @@ ThoughtCoding 是一个**企业级 AI 编程助手 CLI 工具**，基于 Model C
 ```
 ThoughtCoding/
 ├── src/main/java/com/thoughtcoding/
-│   ├── ThoughtCodingCLI.java          # 应用入口（main函数）
+│   ├── ThoughtCodingCLI.java          # 应用入口（main 函数）
 │   │
 │   ├── cli/                           # 命令层（Command Layer）
 │   │   ├── ThoughtCodingCommand.java  # 主命令（交互模式、单次提示、会话管理）
 │   │   ├── SessionCommand.java        # 会话子命令（list、load、delete）
 │   │   ├── ConfigCommand.java         # 配置子命令（show、set、reset）
-│   │   └── MCPCommand.java            # MCP子命令（list、connect、disconnect）
+│   │   └── MCPCommand.java            # MCP 子命令（list、connect、disconnect）
 │   │
 │   ├── core/                          # 核心逻辑层（Core Layer）
 │   │   ├── ThoughtCodingContext.java  # 全局上下文容器（依赖注入）
-│   │   ├── AgentLoop.java             # AI Agent 主循环（对话 + 工具调用）
-│   │   ├── MessageHandler.java        # 消息处理器（流式输出）
-│   │   ├── StreamingOutput.java       # 流式输出管理
-│   │   ├── ProjectContext.java        # 项目上下文检测（Maven/Gradle/NPM等）
-│   │   ├── OptionManager.java         # 选项管理（AI提供多选项）
-│   │   ├── ToolExecutionConfirmation.java # 工具执行确认
-│   │   └── DirectCommandExecutor.java # 直接命令执行器
+│   │   ├── AgentLoop.java             # AI Agent 主循环（原生 function calling 多轮循环）
+│   │   ├── SubAgent.java              # 子代理（隔离子任务）
+│   │   ├── ProjectContext.java        # 项目上下文检测（Maven/Gradle/NPM 等）
+│   │   ├── ToolExecutionConfirmation.java # 工具执行确认（YES/NO）
+│   │   └── DirectCommandExecutor.java # 直接命令执行器（/ 斜杠命令）
 │   │
 │   ├── service/                       # 服务层（Service Layer）
-│   │   ├── AIService.java             # AI服务接口
-│   │   ├── LangChainService.java      # LangChain4j实现（DeepSeek集成）
-│   │   ├── ContextManager.java        # 上下文管理器（历史窗口、Token控制）
+│   │   ├── AIService.java             # AI 服务接口
+│   │   ├── LangChainService.java      # LangChain4j 实现（原生 function calling）
+│   │   ├── ContextManager.java         # 上下文管理器（四层压缩管线 + 系统提示）
 │   │   ├── SessionService.java        # 会话管理服务（持久化、加载）
-│   │   └── PerformanceMonitor.java    # 性能监控（Token统计、执行时间）
+│   │   └── PerformanceMonitor.java    # 性能监控（Token 统计、执行时间）
 │   │
-│   ├── tools/                         # 工具层（Tool Layer）
-│   │   ├── BaseTool.java              # 工具抽象基类
-│   │   ├── ToolRegistry.java          # 工具注册表（统一管理）
-│   │   ├── ToolProvider.java          # 工具提供者接口
-│   │   ├── file/
-│   │   │   └── FileManagerTool.java   # 文件管理工具（读写、目录操作）
-│   │   ├── exec/
-│   │   │   ├── CommandExecutorTool.java # 命令执行工具（Shell命令）
-│   │   │   └── CodeExecutorTool.java    # 代码执行工具（Java/Python/JS）
-│   │   └── search/
-│   │       └── GrepSearchTool.java    # 文本搜索工具（grep功能）
+│   ├── tool/                          # 工具层（Tool Layer）
+│   │   ├── BaseTool.java              # 工具抽象基类（name/description/execute）
+│   │   ├── ToolRegistry.java          # 工具注册中心
+│   │   ├── ToolDispatcher.java        # 工具执行收口（查表 + 参数序列化）
+│   │   ├── ToolSpecificationFactory.java # BaseTool → ToolSpecification 转换（三级降级）
+│   │   └── tools/                     # 8 个内置工具实现
+│   │       ├── BashTool.java          # 命令执行（Windows→PowerShell, Linux/Mac→bash）
+│   │       ├── ReadTool.java          # 文件读取（cat -n 风格带行号）
+│   │       ├── WriteTool.java         # 文件创建/覆写
+│   │       ├── EditTool.java          # 精确字符串替换
+│   │       ├── GlobTool.java          # 文件名搜索（walkFileTree）
+│   │       ├── TodoWriteTool.java     # 内存待办清单
+│   │       ├── SkillTool.java         # 加载 skills/*/SKILL.md
+│   │       └── SubAgentTool.java      # 派发隔离子 Agent
 │   │
-│   ├── mcp/                           # MCP层（MCP Protocol Layer）
-│   │   ├── MCPService.java            # MCP服务管理（多服务器连接）
-│   │   ├── MCPClient.java             # MCP客户端（JSON-RPC通信）
-│   │   ├── MCPToolManager.java        # MCP工具管理器
-│   │   ├── MCPToolAdapter.java        # MCP工具适配器（转BaseTool）
-│   │   └── model/                     # MCP协议数据模型
-│   │       ├── MCPTool.java           # MCP工具模型
-│   │       ├── MCPRequest.java        # MCP请求模型
-│   │       ├── MCPResponse.java       # MCP响应模型
-│   │       ├── MCPError.java          # MCP错误模型
-│   │       └── InputSchema.java       # 输入Schema模型
+│   ├── security/                      # 权限与沙箱层
+│   │   ├── PermissionGate.java        # 统一权限管道（按工具名决策）
+│   │   ├── PermissionHook.java        # Hook 链上的权限检查
+│   │   ├── PermissionResult.java      # 权限决策结果
+│   │   └── Sandbox.java              # 工作区路径解析（仅规范化）
+│   │
+│   ├── hook/                          # Hook 系统（可扩展拦截点）
+│   │   ├── HookType.java / Hook.java / HookContext.java
+│   │   ├── HookRegistry.java          # Hook 责任链注册表
+│   │   └── HookResult.java            # Hook 返回（PROCEED/BLOCK/…）
+│   │
+│   ├── skill/                         # 技能注册
+│   │   └── SkillRegistry.java         # 启动时扫描 skills/ 并解析 SKILL.md
+│   │
+│   ├── exception/                     # 异常定义
+│   │   └── WorkspaceSecurityException.java
+│   │
+│   ├── mcp/                           # MCP 层（MCP Protocol Layer）
+│   │   ├── MCPService.java            # MCP 服务管理（含工具适配）
+│   │   ├── MCPClient.java             # MCP 客户端（JSON-RPC 通信 + stdio 进程管理）
+│   │   ├── MCPToolManager.java        # MCP 工具管理器
+│   │   └── model/                     # MCP 协议数据模型
+│   │       ├── MCPTool.java / MCPRequest.java / MCPResponse.java
+│   │       ├── MCPError.java / InputSchema.java
 │   │
 │   ├── config/                        # 配置层（Configuration Layer）
-│   │   ├── ConfigManager.java         # 配置管理器（单例模式）
-│   │   ├── ConfigLoader.java          # 配置加载器（YAML解析）
+│   │   ├── ConfigManager.java         # 配置管理器
+│   │   ├── ConfigLoader.java          # 配置加载器（YAML 解析）
 │   │   ├── AppConfig.java             # 应用配置模型
-│   │   ├── MCPConfig.java             # MCP配置模型
-│   │   └── MCPServerConfig.java       # MCP服务器配置
+│   │   ├── MCPConfig.java             # MCP 配置模型
+│   │   └── MCPServerConfig.java       # MCP 服务器配置
 │   │
 │   ├── model/                         # 通用数据模型层（Model Layer）
 │   │   ├── ChatMessage.java           # 聊天消息模型
-│   │   ├── ToolCall.java              # 工具调用模型
-│   │   ├── ToolExecution.java         # 工具执行记录
-│   │   ├── ToolResult.java            # 工具执行结果
-│   │   ├── SessionData.java           # 会话数据模型
-│   │   └── ModelConfig.java           # 模型配置
+│   │   ├── ToolCall.java / ToolCallRef.java
+│   │   ├── ToolExecution.java / ToolResult.java
+│   │   ├── SessionData.java / ModelConfig.java
+│   │   └── SubagentTurn.java          # 子代理往返记录
 │   │
-│   ├── ui/                            # UI层（User Interface Layer）
-│   │   ├── ThoughtCodingUI.java       # UI主类（终端管理）
-│   │   ├── AnsiColors.java            # ANSI颜色定义
+│   ├── ui/                            # UI 层（User Interface Layer）
+│   │   ├── ThoughtCodingUI.java       # UI 主类（终端管理）
+│   │   ├── AnsiColors.java            # ANSI 颜色定义
 │   │   ├── TerminalManager.java       # 终端管理器
 │   │   ├── component/
 │   │   │   ├── ChatRenderer.java      # 聊天渲染器
-│   │   │   ├── ToolDisplay.java       # 工具展示器
 │   │   │   ├── InputHandler.java      # 输入处理器
 │   │   │   ├── StatusBar.java         # 状态栏
 │   │   │   └── ProgressIndicator.java # 进度指示器
@@ -120,17 +132,16 @@ ThoughtCoding/
 │   │       └── ColorScheme.java       # 颜色方案
 │   │
 │   └── util/                          # 工具类层（Utility Layer）
-│       ├── JsonUtils.java             # JSON工具
-│       ├── FileUtils.java             # 文件工具
-│       ├── StreamUtils.java           # 流工具
-│       └── ConsoleUtils.java          # 控制台工具
+│       ├── JsonUtils.java / FileUtils.java
+│       ├── StreamUtils.java / ConsoleUtils.java
 │
+├── skills/                            # 内置技能（docx/pdf/pptx/xlsx/mcp-builder/skill-creator）
+├── config.example.yaml                # 配置模板（复制为 config.yaml）
 ├── src/main/resources/
-│   ├── config.yaml                    # 主配置文件
-│   └── thoughtcoding-banner.txt       # 启动Banner
+│   └── thoughtcoding-banner.txt       # 启动 Banner
 │
 └── sessions/                          # 会话存储目录
-    └── *.json                         # 会话文件（按UUID命名）
+    └── *.json                         # 会话文件（按 UUID 命名）
 ```
 
 ### 1.4 核心逻辑调用链路
@@ -141,19 +152,23 @@ ThoughtCoding/
 ThoughtCodingCLI.main()
     ↓
 ThoughtCodingContext.initialize()  [静态工厂方法]
-    ├── ConfigManager.getInstance().initialize("config.yaml")
-    ├── 创建 ToolRegistry
-    ├── 注册内置工具（FileManager、CommandExecutor、CodeExecutor、GrepSearch）
-    ├── 创建 MCPService 和 MCPToolManager
-    ├── 连接 MCP 服务器（如果配置启用）
+    ├── ConfigLoader 加载 config.yaml
+    ├── SkillRegistry.scan(<cwd>/skills)     # 先于工具，解析 SKILL.md
+    ├── 创建 ToolRegistry(appConfig)
+    ├── 按 config 开关注册 bash/read/write/edit/glob（各自 if enabled）
+    ├── 无条件注册 todo_write（TodoWriteTool）
+    ├── skills 非空时注册 skill（SkillTool）
+    ├── 注册 MCP 工具（MCPService.convertToBaseTools）
     ├── 创建 ContextManager、SessionService、PerformanceMonitor
     ├── 创建 LangChainService（初始化 DeepSeek 模型）
-    └── 创建 ThoughtCodingUI（初始化 JLine 终端）
+    ├── 创建 ThoughtCodingUI（初始化 JLine 终端）
+    ├── Builder.build() 构建 context 后补注册 subAgent（SubAgentTool，需已构建的 context 引用）
     ↓
 Picocli 命令解析
     ├── 注册 ThoughtCodingCommand（主命令）
     ├── 注册 SessionCommand（会话管理）
-    └── 注册 ConfigCommand（配置管理）
+    ├── 注册 ConfigCommand（配置管理）
+    └── 注册 MCPCommand（MCP 管理）
     ↓
 执行命令（根据参数路由）
 ```
@@ -164,82 +179,60 @@ Picocli 命令解析
 用户输入
     ↓
 ThoughtCodingCommand.call()
-    ├── 创建 AgentLoop（会话管理器）
+    ├── 创建 AgentLoop（会话引擎）
     ├── 加载历史会话（如果使用 --continue）
     └── 进入交互循环
     ↓
 AgentLoop.processInput(input)
-    ├── 检查是否是选项输入（1/2/3）→ 处理选项选择
+    ├── HookRegistry.fire(UserPromptSubmit)   # BLOCK 则跳过本轮
     ├── 添加用户消息到历史
-    └── 调用 LangChainService.streamingChat()
+    └── runNativeToolLoop()（原生 function calling 多轮循环）
     ↓
 LangChainService.streamingChat()
-    ├── 构建消息列表
-    │   ├── 系统提示（包含工具列表和使用说明）
-    │   ├── 历史对话（通过 ContextManager 管理长度）
-    │   └── 当前用户输入
-    ├── 调用 DeepSeek API（通过 LangChain4j）
-    └── 流式处理响应
+    ├── 由 ContextManager.getContextForAI() 得到压缩后的历史
+    ├── 系统提示（角色/规则/技能目录，不罗列工具——工具经 ToolSpecification 结构化下发）
+    ├── reqBuilder.toolSpecifications(registry.getToolSpecifications())  # 每次请求现算
+    ├── 调用模型（通过 LangChain4j）
+    └── 流式处理响应（onNext → UI 实时显示）
     ↓
-StreamingResponseHandler.onNext(token)
-    ├── 实时检测代码块（```java）
-    ├── 提取文件名
-    ├── 缓存代码内容
-    └── 实时显示（通过 MessageHandler）
+模型响应：
+  ├── 无工具调用 → onComplete 后退出循环（自然终止）
+  └── 有 tool_execution_request → onComplete 后在 AgentLoop.handleToolCall 缓存
     ↓
-MessageHandler.handleMessage(message)
-    ├── ThoughtCodingUI.displayAIMessage()（实时显示）
-    ├── OptionManager.extractOptionsFromResponse()（提取选项）
-    └── 不添加到历史（等待完整响应）
-    ↓
-代码块结束（检测到第二个 ```）
-    ├── 触发工具调用：triggerToolCallWithCode()
-    ├── 创建 ToolCall（tool_name: file_manager, arguments: {path, content}）
-    └── 缓存到 pendingToolCall（等待流式输出完成）
-    ↓
-StreamingResponseHandler.onComplete()
-    ├── 添加完整 AI 响应到历史
-    └── 返回 AgentLoop
-    ↓
-AgentLoop.executePendingToolCall()
-    ├── 显示工具调用信息
-    ├── 用户确认（ToolExecutionConfirmation）
-    ├── 执行工具：ToolRegistry.getTool().execute()
-    ├── 显示执行结果
-    └── 保存会话：SessionService.saveSession()
+runNativeToolLoop 逐个执行（见 1.4.3），结果按 providerCallId 配对回写给模型
+  └── 再次 streamingChat()，直到无工具调用 / 用户取消 / 达到 maxToolIterations
 ```
 
 #### 1.4.3 工具执行流程
 
 ```
-ToolRegistry.getTool(toolName)
+AgentLoop.runNativeToolLoop 取出本轮所有 ToolCall（pendingToolCalls）
     ↓
-BaseTool.execute(input)
-    ├── FileManagerTool.execute()
-    │   ├── 解析 JSON 参数
-    │   ├── 根据 action 路由（read/write/list/create/delete/info）
-    │   ├── 执行文件操作（使用 Java NIO）
-    │   └── 返回 ToolResult
-    │
-    ├── CommandExecutorTool.execute()
-    │   ├── 构建 ProcessBuilder
-    │   ├── 执行 Shell 命令
-    │   ├── 捕获输出
-    │   └── 返回 ToolResult
-    │
-    ├── CodeExecutorTool.execute()
-    │   ├── 检测语言类型
-    │   ├── 创建临时文件
-    │   ├── 编译（如果需要）
-    │   ├── 执行
-    │   └── 返回结果 + 清理临时文件
-    │
-    └── MCPToolAdapter（MCP工具）
-        ├── 解析输入为 JSON 参数
-        ├── 调用 MCPService.callTool()
-        ├── MCPClient 发送 JSON-RPC 请求
-        ├── MCP Server 处理（Node.js进程）
-        └── 返回结果
+对每个 ToolCall：
+  HookRegistry.fire(PRE_TOOL_USE, call)        # 串行执行 Hook 链
+    └── PermissionHook → PermissionGate.check(toolName, path)
+          ├── DENY（bash 命中 BASH_DENY_PATTERNS）→ 返回 BLOCK，跳过该工具
+          ├── WARN（写/执行类或越界只读）→ 弹 ToolExecutionConfirmation，用户 YES/NO
+          └── ALLOW（只读在 workspace 内 / todo_write / skill / subAgent）→ 直接通过
+    ↓ （BLOCK 则写一条拒绝结果并 continue）
+ToolDispatcher.dispatch(call)
+    └── ToolRegistry.getTool(name) → 参数 Jackson 序列化为 JSON → BaseTool.execute(json)
+    ↓
+具体工具.execute()（见 1.3 工具层清单）
+    ├── BashTool / ReadTool / WriteTool / EditTool / GlobTool / TodoWriteTool / SkillTool / SubAgentTool
+    └── MCP 工具：MCPService.convertToBaseTools 产出的 BaseTool 匿名类 → callTool(server, name, params)
+    ↓
+返回 ToolResult
+    ↓
+HookRegistry.fire(POST_TOOL_USE, call, result)
+    ↓
+AgentLoop.displayNativeToolResult()
+    ├── 写/执行结果按 QUIET_OUTPUT_TOOLS（read/glob/skill）决定是否 dump 到终端
+    └── 子代理结果独立分支：仅打印「└ 子Agent已返回结论」
+    ↓
+ChatMessage.toolResult(providerCallId, name, resultText) 写回 history（配对回喂模型）
+    ↓
+下一轮 streamingChat()，或达到 maxToolIterations 上限后退出循环
 ```
 
 #### 1.4.4 MCP 集成流程
@@ -344,10 +337,10 @@ public class ThoughtCodingContext {
 private List<ChatMessage> prepareMessages(String input, List<ChatMessage> history) {
     List<ChatMessage> messages = new ArrayList<>();
     
-    // 1. 系统提示（包含工具信息）
-    messages.add(SystemMessage.from(buildSystemPromptWithTools()));
+    // 1. 系统提示（角色/规则/技能目录，由 ContextManager 构建，不罗列工具）
+    messages.add(SystemMessage.from(contextManager.buildNativeSystemPrompt().text()));
     
-    // 2. 历史对话
+    // 2. 历史对话（经 ContextManager.getContextForAI() 四层压缩后控制长度）
     if (history != null && !history.isEmpty()) {
         messages.addAll(convertToLangChainHistory(history));
     }
@@ -359,12 +352,15 @@ private List<ChatMessage> prepareMessages(String input, List<ChatMessage> histor
 }
 ```
 
-**③ 上下文优化策略**
+**③ 上下文优化策略（四层压缩管线，顺序严格）**
 
-1. **滑动窗口**：只保留最近 N 轮对话，避免超出 Token 限制
-2. **上下文压缩**：对较长历史进行摘要压缩
-3. **选择性加载**：根据任务类型动态加载相关上下文
-4. **持久化存储**：会话自动保存到 JSON 文件
+`ContextManager.getContextForAI()` 在每次请求前对历史做压缩，入口深拷贝一次、各层只动副本，最后 `sanitizeToolPairs` 兜底工具配对：
+
+1. **L3 落盘**：当轮那批工具结果总字节超过聚合预算（默认 `maxContextTokens/2`）时，仅把单条超过 `perResultPersistBytes`（默认 30KB）的大结果落盘到 `transcripts/persisted/`，正文换 `<persisted-output>` 标记 + 预览 + 磁盘路径（正常单次 read 不触发）
+2. **L1 裁中段**：消息数超过 `maxMessages`（默认 50）时，保留头部 `snipKeepHead`（3）+ 尾部 `snipKeepTail`（20），中段替换为一条 `[snipped N messages]`，切点带工具配对边界保护
+3. **L2 旧结果占位**：仅最近 `keepRecentToolResults`（3）条工具结果保留全文，更旧的换 `[Previous: used <tool>]` 占位（L3 已落盘的保留预览+路径）
+4. **L4 LLM 摘要**：前三层跑完估算 token 仍超 `maxContextTokens`（默认 48000）时，落盘完整对话并调用模型摘要旧历史，构造 `[Conversation compressed.] + 摘要 + 尾部 l4KeepTail(6) 条` 的新列表；连续失败 3 次触发熔断本会话停止摘要。Token 估算：中文 2 字符≈1 token、英文 4 字符≈1 token
+5. **持久化存储**：会话自动保存到 JSON 文件（`sessions/`）
 
 **④ 实际应用思考**
 
@@ -384,7 +380,7 @@ private List<ChatMessage> prepareMessages(String input, List<ChatMessage> histor
 
 #### 技术挑战
 
-DeepSeek 不原生支持 OpenAI 的 Function Calling，我们采用了**提示词驱动**的方式实现工具调用。
+工具的"名称 / 说明 / 参数"必须让模型在每次请求时都能拿到，且模型回传的调用意图要能可靠地路由回具体实现、并把结果按正确 id 配对回喂——配对出错会导致模型返回 400。
 
 #### 我们的实现
 
@@ -395,67 +391,64 @@ DeepSeek 不原生支持 OpenAI 的 Function Calling，我们采用了**提示�
 public class ToolRegistry {
     private final Map<String, BaseTool> tools = new HashMap<>();
     
-    // 统一注册接口
+    // 统一注册接口（按 config 开关过滤）
     public void register(BaseTool tool) {
         if (isToolEnabled(tool.getName())) {
             tools.put(tool.getName(), tool);
         }
     }
     
-    // 获取所有工具（用于生成系统提示）
-    public List<BaseTool> getAllTools() {
-        return new ArrayList<>(tools.values());
+    // 每次请求现算 ToolSpecification 列表（含运行期连接的 MCP 工具）
+    // 单个工具 spec 生成失败时静默跳过，不阻塞整次请求
+    public List<ToolSpecification> getToolSpecifications() {
+        List<ToolSpecification> specs = new ArrayList<>();
+        for (BaseTool tool : tools.values()) {
+            try {
+                specs.add(ToolSpecificationFactory.build(tool));
+            } catch (Exception ignored) { /* 跳过无法生成 spec 的工具 */ }
+        }
+        return specs;
     }
 }
 ```
 
-**② 系统提示词生成**
+**② 工具 schema 的结构化下发（不再进 system prompt 文本）**
 
 ```java
-// 动态构建包含工具信息的系统提示
-private String buildSystemPromptWithTools() {
-    StringBuilder prompt = new StringBuilder();
-    prompt.append("你是一个智能编程助手，可以调用以下工具完成任务：\n\n");
-    
-    for (BaseTool tool : toolRegistry.getAllTools()) {
-        prompt.append(String.format(
-            "工具名称：%s\n描述：%s\n参数：%s\n\n",
-            tool.getName(),
-            tool.getDescription(),
-            tool.getInputSchema()
-        ));
-    }
-    
-    prompt.append("请根据用户需求选择合适的工具执行任务。");
-    return prompt.toString();
-}
+// LangChainService.streamingChat()：把 ToolSpecification 经 ChatRequest 结构化通道下发
+// 模型据此在 tool_execution_request 中表达调用意图，不再靠提示词格式或文本抓取
+reqBuilder.toolSpecifications(toolRegistry.getToolSpecifications());
+
+// 系统提示只讲角色/语言/规则；工具清单由 ToolSpecification 承载
+// ContextManager.buildNativeSystemPrompt() 仅追加技能目录（名称+简介），完整 SKILL.md 由模型按需调用 skill 工具加载
 ```
 
 **③ 工具执行流程**
 
 ```
-用户输入
+模型 tool_execution_request
     ↓
-AI 理解意图
+LangChainService.onCompleteResponse → AgentLoop.handleToolCall（缓存进 pendingToolCalls）
     ↓
-生成工具调用指令
+AgentLoop.runNativeToolLoop 逐个执行
+    ├── HookRegistry.fire(PRE_TOOL_USE) → PermissionHook → PermissionGate.check（DENY 阻断 / WARN 弹确认）
+    ├── ToolDispatcher.dispatch → ToolRegistry.getTool → 参数序列化为 JSON → BaseTool.execute(json)
+    ├── 工具内 Sandbox.resolve(path) 解析工作区路径
+    ├── 返回 ToolResult → HookRegistry.fire(POST_TOOL_USE)
     ↓
-ToolRegistry 查找工具
+displayNativeToolResult（按 QUIET_OUTPUT_TOOLS 决定是否 dump 到终端）
     ↓
-执行工具（BaseTool.execute）
+ChatMessage.toolResult(providerCallId, ...) 写回 history（按 providerCallId 配对，区别于本地 getId()）
     ↓
-返回结果
-    ↓
-AI 解释结果
+下一轮 streamingChat()
 ```
 
 **④ 工具分类**
 
 | 类型 | 工具示例 | 说明 |
 |------|---------|------|
-| **内置工具** | FileManager、CommandExecutor | Java 直接实现 |
-| **MCP工具** | GitHub、Database、Filesystem | 通过 MCP 协议连接 |
-| **自定义工具** | CodeExecutor、GrepSearch | 项目特定工具 |
+| **内置工具** | bash、read、write、edit、glob、todo_write、skill、subAgent | `tool/tools/` 下的 `BaseTool` 子类，Java 直接实现 |
+| **MCP工具** | filesystem、github、postgres 等 | `MCPService.convertToBaseTools` 产出的 `BaseTool` 匿名子类，仅覆写 `getInputSchema()`，走 `fromRawSchema` 分支转换 |
 
 ---
 
@@ -524,7 +517,7 @@ public class MCPClient {
 **③ 工具适配器模式**
 
 ```java
-// MCPToolAdapter - 将 MCP 工具转换为 BaseTool
+// MCPService.convertToBaseTools - 为每个 MCP 工具创建 BaseTool 匿名子类
 private List<BaseTool> convertToBaseTools(List<MCPTool> mcpTools, String serverName) {
     List<BaseTool> baseTools = new ArrayList<>();
     
@@ -589,45 +582,32 @@ mcp:
 ```
 系统提示词（System Prompt）
     ├─ 角色定位："你是一个智能编程助手"
-    ├─ 能力说明："你可以调用以下工具..."
-    ├─ 工具列表：动态注入所有可用工具
-    └─ 行为规范："请根据用户需求选择合适的工具"
+    ├─ 能力说明："你可以调用系统提供的工具完成任务"
+    ├─ 技能目录：动态注入已扫描到的技能（名称 + 简介）
+    └─ 行为规范："需操作时直接调用工具，不要编造结果"
 
 用户提示词（User Prompt）
     ├─ 当前输入
     └─ 上下文信息（可选）
 
 历史提示词（History）
-    └─ 之前的对话记录
+    └─ 之前的对话记录（经 ContextManager 四层压缩管线控制长度）
 ```
 
-**② 动态提示词生成**
+**② 系统提示：角色/规则 + 技能目录，工具经结构化通道下发**
 
 ```java
-private String buildSystemPromptWithTools() {
-    StringBuilder prompt = new StringBuilder();
-    
-    // 1. 角色定位
-    prompt.append("你是 ThoughtCoding，一个专业的编程助手。\n\n");
-    
-    // 2. 能力说明
-    prompt.append("你可以调用以下工具来完成任务：\n\n");
-    
-    // 3. 动态工具列表
-    List<BaseTool> tools = toolRegistry.getAllTools();
-    for (BaseTool tool : tools) {
-        prompt.append(formatToolDescription(tool));
-    }
-    
-    // 4. 行为规范
-    prompt.append("\n使用规则：\n");
-    prompt.append("- 优先理解用户意图\n");
-    prompt.append("- 选择最合适的工具\n");
-    prompt.append("- 清晰解释执行过程\n");
-    
-    return prompt.toString();
-}
+// ContextManager.buildNativeSystemPrompt()：系统提示只讲角色/语言/规则，
+// 不再罗列工具——工具清单由 ToolSpecification 经 ChatRequest 结构化下发。
+// 技能仅注入「名称 + 简介」目录，完整 SKILL.md 由模型按需调用 skill 工具加载。
+StringBuilder prompt = new StringBuilder();
+prompt.append("## 指令\n- 始终用中文回答，解释与代码注释也用中文。\n");
+prompt.append("## 规则\n- 需要操作时直接调用系统提供的工具（名称/说明/参数已由系统注入）\n");
+appendSkillCatalog(prompt);   // 追加技能目录
+return prompt.toString();
 ```
+
+注意：动态提示词不再承担"把工具塞进文本让模型照格式输出"的职责；工具 schema 走 `ToolSpecification` 结构化通道，模型通过 `tool_execution_request` 表达调用意图。
 
 **③ Few-shot Learning**
 
@@ -636,15 +616,15 @@ private String buildSystemPromptWithTools() {
 String examples = """
 示例1：
 用户：查看 pom.xml 文件
-助手：[调用 file_manager 工具读取文件] → 展示文件内容
+助手：调用 read 工具读取文件（cat -n 风格带行号）→ 展示文件内容
 
 示例2：
 用户：在项目中搜索 MCP 相关代码
-助手：[调用 grep_search 工具] → 返回搜索结果
+助手：调用 bash 工具执行 grep/rg 搜索内容 → 返回匹配结果
 
 示例3：
 用户：提交代码
-助手：[调用 command_executor 执行 git commit] → 确认提交成功
+助手：调用 bash 工具执行 git commit → 确认提交成功
 """;
 ```
 
@@ -745,25 +725,35 @@ public class QwenService implements AIService {
 
 #### ③ Adapter 模式 - MCP 工具适配
 
-**应用场景**：将 MCP 工具适配为统一的 BaseTool 接口
+**应用场景**：将 MCP 服务器暴露的工具适配为统一的 `BaseTool` 接口，对上层（AgentLoop / ToolDispatcher）透明。
 
 ```java
-// 目标接口
-public abstract class BaseTool {
-    public abstract ToolResult execute(String input);
-}
-
-// 适配器
-public class MCPToolAdapter {
-    public List<BaseTool> convertToBaseTools(List<MCPTool> mcpTools) {
-        // 将 MCPTool 适配为 BaseTool
+// MCPService.convertToBaseTools：为每个 MCPTool 创建 BaseTool 匿名子类
+private List<BaseTool> convertToBaseTools(List<MCPTool> mcpTools, String serverName) {
+    List<BaseTool> baseTools = new ArrayList<>();
+    for (MCPTool mcpTool : mcpTools) {
+        BaseTool baseTool = new BaseTool(mcpTool.getName(), mcpTool.getDescription()) {
+            @Override
+            public ToolResult execute(String input) {
+                Map<String, Object> params = parseInputToParameters(input);
+                Object result = callTool(serverName, mcpTool.getName(), params);
+                return success(result.toString());
+            }
+            // 仅覆写 getInputSchema()，故 ToolSpecificationFactory 走 fromRawSchema 分支
+            @Override
+            public Object getInputSchema() {
+                return mcpTool.getInputSchema();
+            }
+        };
+        baseTools.add(baseTool);
     }
+    return baseTools;
 }
 ```
 
 **优点**：
-- 统一工具接口
-- 隐藏 MCP 通信细节
+- 统一工具接口，MCP 工具与内置工具在 `ToolRegistry` 中一视同仁
+- 隐藏 MCP 通信（JSON-RPC over stdio）细节
 - 易于测试和维护
 
 ---
@@ -832,41 +822,36 @@ public class ConfigManager {
 
 #### ⑥ Template Method 模式 - 工具执行流程
 
-**应用场景**：定义工具执行的标准流程
+**应用场景**：所有内置工具共享同一份 `BaseTool` 契约——固定 `name`/`description`、唯一抽象方法 `execute(String JSON)`，以及 `inputSchema()` 与 `getInputSchema()` 两个可覆写 schema 钩子（三级降级见 2.2 ①）。子类只填差异，具体执行流程由 `ToolDispatcher` → `ToolRegistry.getTool` → `execute(JSON)` 统一收口。
 
 ```java
 public abstract class BaseTool {
-    // 模板方法
-    public final ToolResult executeWithValidation(String input) {
-        // 1. 前置检查
-        if (!isEnabled()) {
-            return error("工具未启用");
-        }
-        
-        // 2. 参数验证
-        if (!validateInput(input)) {
-            return error("参数验证失败");
-        }
-        
-        // 3. 执行（子类实现）
-        ToolResult result = execute(input);
-        
-        // 4. 后置处理
-        logExecution(result);
-        
-        return result;
+    protected final String name;
+    protected final String description;
+
+    public BaseTool(String name, String description) {
+        this.name = name;
+        this.description = description;
     }
-    
-    // 钩子方法
-    protected abstract ToolResult execute(String input);
-    protected boolean validateInput(String input) { return true; }
+
+    // 唯一抽象方法：入参恒为 JSON 字符串
+    public abstract ToolResult execute(String input);
+
+    // 可覆写钩子：内置工具返回 JsonObjectSchema；默认 null 时走 fromRawSchema / genericSchema 降级
+    public JsonObjectSchema inputSchema() { return null; }
+    public Object getInputSchema() { return null; }
+
+    // 四个 ToolResult 工厂重载（success / error），子类直接使用
+    protected ToolResult success(String output) { ... }
 }
 ```
 
+**注意**：**实际并不存在** `executeWithValidation` / `isEnabled()` / `validateInput()` / `logExecution()` 等模板方法——工具启用判定在 `ToolRegistry.isToolEnabled`、参数校验在各工具 `execute` 内自行做、权限/越界判定在 `PermissionGate`，均不在 `BaseTool` 内。
+
 **优点**：
-- 统一执行流程
-- 子类只需关注核心逻辑
-- 易于添加通用功能
+- 统一契约，新增工具只需实现 `execute` + `inputSchema`
+- 执行收口在 `ToolDispatcher`，便于统一接入 Hook / 权限管道
+- 易于添加通用功能（如 hook 拦截）而不侵入每个工具
 
 ---
 
@@ -902,13 +887,13 @@ public class ThoughtCodingContext {
     <dependency>
         <groupId>dev.langchain4j</groupId>
         <artifactId>langchain4j</artifactId>
-        <version>0.26.1</version>
+        <version>${langchain4j.version}</version>  <!-- 1.10.0 -->
     </dependency>
     
     <dependency>
         <groupId>dev.langchain4j</groupId>
         <artifactId>langchain4j-open-ai</artifactId>
-        <version>0.26.1</version>
+        <version>${langchain4j.version}</version>  <!-- 1.10.0，原生 function calling 的 ToolSpecification / JsonObjectSchema API 来自此版本线 -->
     </dependency>
     
     <!-- CLI 框架 -->
@@ -922,7 +907,7 @@ public class ThoughtCodingContext {
     <dependency>
         <groupId>org.jline</groupId>
         <artifactId>jline</artifactId>
-        <version>3.25.0</version>
+        <version>3.23.0</version>
     </dependency>
     
     <!-- JSON 处理 -->
@@ -943,7 +928,7 @@ public class ThoughtCodingContext {
 #### 模块化设计原则
 
 1. **高内聚低耦合**：每个包负责单一职责
-2. **依赖倒置**：面向接口编程（AIService、ToolProvider）
+2. **依赖倒置**：面向接口编程（AIService 是唯一真实的服务接口；不存在 ToolProvider 接口）
 3. **开闭原则**：对扩展开放，对修改关闭
 4. **单一职责**：每个类只做一件事
 
@@ -963,7 +948,7 @@ public class ThoughtCodingContext {
 
 | 模式 | 应用位置 | 作用 |
 |------|---------|------|
-| **Adapter** | MCPToolAdapter | MCP工具适配 |
+| **Adapter** | MCPService.convertToBaseTools | MCP工具适配为 BaseTool |
 | **Facade** | ThoughtCodingContext | 统一访问入口 |
 | **Proxy** | MCPClient | 远程工具代理 |
 
@@ -973,7 +958,7 @@ public class ThoughtCodingContext {
 |------|---------|------|
 | **Strategy** | AIService | 多AI模型策略 |
 | **Observer** | StreamingResponseHandler | 流式输出监听 |
-| **Template Method** | BaseTool | 工具执行模板 |
+| **Template Method** | BaseTool + ToolDispatcher | 工具契约与执行收口 |
 | **Command** | DirectCommandExecutor | 命令封装 |
 
 ---
@@ -1046,7 +1031,7 @@ thought --mcp-connect gitlab --mcp-command "npx" --mcp-args "-y @gitlab/mcp-serv
 
 # AI 自动执行：
 # ① 调用 git_diff 获取变更文件
-# ② 调用 file_manager 读取变更代码
+# ② 调用 read 读取变更代码
 # ③ 静态分析代码质量
 # ④ 生成审查报告
 ```
@@ -1078,7 +1063,7 @@ thought --mcp-connect gitlab --mcp-command "npx" --mcp-args "-y @gitlab/mcp-serv
 > 分析 application.log 中的错误日志，按错误类型分组并统计频率
 
 # AI 自动执行：
-# ① 调用 grep_search 搜索 ERROR 关键字
+# ① 调用 bash 执行 grep 搜索 ERROR 关键字
 # ② 提取错误堆栈
 # ③ 聚合相同错误
 # ④ 生成统计报告
@@ -1121,7 +1106,7 @@ ORDER BY date;
 > 在项目文档中搜索"如何配置 Redis 集群"
 
 # AI 自动执行：
-# ① 调用 grep_search 在文档目录搜索
+# ① 调用 bash 执行 grep/rg 在文档目录搜索
 # ② 提取相关段落
 # ③ 总结关键步骤
 ```
@@ -1165,35 +1150,11 @@ ORDER BY date;
 
 ## 6. 技术难点与创新突破
 
-### 6.1 DeepSeek 不支持 Function Calling 的解决方案
+### 6.1 从文本抓取到原生 Function Calling 的迁移
 
-#### 问题背景
+早期版本曾用「提示词驱动 + 代码块检测（`triggerToolCallWithCode`）」实现工具调用——在系统提示里罗列工具 Schema、实时检测 ```` ``` ```` 代码块触发执行。该方案依赖正则解析、成功率低、且易因配对错误触发 400，已在引入 LangChain4j 1.10 原生 function calling 后被彻底移除。
 
-OpenAI 的 GPT-4 原生支持 Function Calling，但 DeepSeek 不支持。
-
-#### 我们的创新
-
-通过**提示词工程**实现工具调用：
-
-1. **动态生成系统提示**：将所有工具的 Schema 注入提示词
-2. **代码块识别**：检测 AI 返回的代码块，自动触发工具调用
-3. **延迟执行**：等待流式输出完成后再执行工具，确保用户看到完整推理过程
-
-**关键代码**：
-
-```java
-// 实时检测代码块
-if (!inCodeBlock && token.contains("```")) {
-    inCodeBlock = true;
-    detectedFileName = extractFileNameFromText(currentText);
-}
-
-if (inCodeBlock && token.contains("```")) {
-    inCodeBlock = false;
-    // 触发工具调用
-    triggerToolCallWithCode(detectedFileName, codeBuffer.toString());
-}
-```
+**当前做法**：工具清单经 `ChatRequest.toolSpecifications` 结构化下发，模型通过 `tool_execution_request` 表达调用意图，由 `AgentLoop.runNativeToolLoop` 统一执行与配对回喂（详见 5.1）。代码块检测相关逻辑不再存在于代码库中。
 
 ### 6.2 流式输出的用户体验优化
 
@@ -1253,23 +1214,19 @@ Runtime.getRuntime().addShutdownHook(new Thread(() -> {
 
 #### 解决方案
 
-**混合策略**：
-
-1. **滑动窗口**：保留最近 10 轮对话
-2. **Token 控制**：动态计算 Token，超过 3000 时截断
-3. **重要信息保留**：系统提示和项目上下文永不截断
+**四层压缩管线**（详见 2.1 ③）：落盘大工具结果（L3）→ 裁中段（L1）→ 旧结果占位（L2）→ 超阈值则 LLM 摘要（L4），最后 `sanitizeToolPairs` 兜底工具配对。不再是简单的"滑动窗口 + 截断"。
 
 ```java
 public List<ChatMessage> getContextForAI(List<ChatMessage> fullHistory) {
-    // 1. 计算 Token
-    int totalTokens = estimateTokens(fullHistory);
-    
-    // 2. 如果超限，应用滑动窗口
-    if (totalTokens > maxContextTokens) {
-        return applySlidingWindow(fullHistory);
+    // 入口深拷贝一次，后续各层只动副本
+    List<ChatMessage> work = deepCopyAll(fullHistory);
+    work = toolResultBudget(work);   // L3 落盘
+    work = snipCompact(work);        // L1 裁中段
+    work = microCompact(work);       // L2 旧结果占位
+    if (estimateTotalTokens(work) > maxContextTokens) {
+        work = compactHistory(work, fullHistory); // L4 摘要
     }
-    
-    return fullHistory;
+    return sanitizeToolPairs(work);  // 兜底工具配对
 }
 ```
 
@@ -1290,7 +1247,7 @@ AI：你可以使用 touch 命令创建文件...（只是建议）
 
 ThoughtCoding：
 用户：帮我创建一个文件
-AI：[调用 file_manager 工具] → 文件已创建（实际执行）
+AI：[调用 write 工具] → 文件已创建（实际执行）
 ```
 
 #### AI Agent 的核心要素
@@ -1450,7 +1407,7 @@ thought --mcp-connect postgres
 > 在团队文档中搜索"Redis 高可用方案"，总结最佳实践
 
 # AI 自动：
-# ① grep_search 搜索文档
+# ① bash 执行 grep/rg 搜索文档
 # ② 提取相关段落
 # ③ 总结关键点
 # ④ 生成实施建议
@@ -1559,16 +1516,15 @@ public class AgentLoop {
 #### ③ 接口隔离
 
 ```java
-// 工具提供者接口
-public interface ToolProvider {
-    void registerTool(BaseTool tool);
-    BaseTool getTool(String toolName);
-    boolean isToolAvailable(String toolName);
-}
+// ToolRegistry 不 implements 任何接口，仅暴露必要方法（接口隔离）
+// 注：不存在 ToolProvider 接口；registerTool / isToolAvailable 等方法名也不存在，
+//     真实对外方法是 register(BaseTool) / getTool(String) / getToolSpecifications()
+public class ToolRegistry {
+    private final Map<String, BaseTool> tools = new HashMap<>();
 
-// 工具注册表只实现必要接口
-public class ToolRegistry implements ToolProvider {
-    // 实现
+    public void register(BaseTool tool) { ... }
+    public BaseTool getTool(String toolName) { return tools.get(toolName); }
+    public List<ToolSpecification> getToolSpecifications() { ... }
 }
 ```
 
@@ -1864,39 +1820,24 @@ LIMIT 10;
 
 ## 5. 技术难点与创新
 
-### 5.1 难点一：DeepSeek 不支持原生 Function Calling
+### 5.1 难点一：依赖模型侧的原生 Function Calling
 
 #### 问题
 
-DeepSeek 等国产模型不支持 OpenAI 的 `functions` 参数，无法直接使用 LangChain4j 的工具调用机制。
+本项目使用 LangChain4j 1.10 的原生 function calling 实现多轮 agentic 循环——工具清单经 `ChatRequest.toolSpecifications` 结构化下发，模型通过 `tool_execution_request` 表达调用意图，结果再按 `ToolCall.providerCallId()` 配对回喂。这要求所接模型**必须支持 function calling**（DeepSeek-chat、GPT 等均可），不支持该能力的模型无法使用本项目。
 
-#### 解决方案
+早期版本曾尝试"提示词驱动 + 文本抓取"：在系统提示里罗列工具、用 `[TOOL:tool_name] {json}` 这类约定格式表达意图，再靠正则/代码块检测解析。这种方式工具调用成功率低（约 75–85%）、且易因配对错误触发 400，最终被原生 function calling 取代。
 
-**提示词驱动的工具调用**：
+#### 关键实现点
 
-1. 在系统提示中明确描述所有可用工具
-2. 教 AI 使用特定格式表达工具调用意图
-3. 通过正则或 JSON 解析提取工具调用信息
-4. 执行工具后将结果反馈给 AI
-
-```java
-// 系统提示示例
-String systemPrompt = """
-你可以调用以下工具：
-1. file_manager(path, action) - 文件操作
-2. command_executor(command) - 执行命令
-
-调用格式：[TOOL:tool_name] {json_params}
-
-示例：
-[TOOL:file_manager] {"path": "pom.xml", "action": "read"}
-""";
-```
+1. **Schema 三级降级**：`ToolSpecificationFactory.build(BaseTool)` 依次尝试 `inputSchema()` → `fromRawSchema(getInputSchema())` → `genericSchema()`，单工具失败静默跳过（见 2.2 ①）。
+2. **配对正确性**：回喂时必须用 `providerCallId`（langchain4j 的 `ToolExecutionRequest.id`），而非本地 `getId()`；`ContextManager.sanitizeToolPairs` 在每层裁剪后兜底丢弃孤立的 tool 结果 / 调用。
+3. **权限前置**：工具执行前经 `HookRegistry.fire(PRE_TOOL_USE)` → `PermissionGate.check` 决策，越界只读弹确认、危险命令 DENY，与原生调用链路无缝衔接。
 
 #### 效果
 
-- 工具调用成功率：75-85%
-- 比原生 Function Calling 稍慢，但仍可用
+- 工具调用成功率显著高于文本抓取方案，且不再需要正则解析
+- 代价：模型必须支持 function calling，选型受限（已在 `config.example.yaml` 顶部明确提示）
 
 ---
 
@@ -2034,8 +1975,8 @@ public void onNext(String token) {
 ThoughtCoding 项目成功将 AI 理论与工程实践深度融合：
 
 **AI 理论应用**：
-- ✅ 上下文管理：分层架构 + 持久化
-- ✅ 工具调用：提示词驱动 + 自动执行
+- ✅ 工具调用：原生 function calling + 权限管道 + 结果自动回喂
+- ✅ 上下文管理：四层压缩管线（落盘 / 裁中段 / 旧结果占位 / LLM 摘要）
 - ✅ MCP 协议：标准化集成 + 生态扩展
 - ✅ 提示词工程：动态生成 + Few-shot
 
