@@ -16,6 +16,7 @@ import com.thoughtcoding.tool.tools.EditTool;
 import com.thoughtcoding.tool.tools.GlobTool;
 import com.thoughtcoding.tool.tools.ReadTool;
 import com.thoughtcoding.tool.Sandbox;
+import com.thoughtcoding.tool.tools.TodoWriteTool;
 import com.thoughtcoding.tool.tools.WriteTool;
 import com.thoughtcoding.ui.ThoughtCodingUI;
 
@@ -99,6 +100,9 @@ public class ThoughtCodingContext {
         if (appConfig.getTools().getGlob().isEnabled()) {
             toolRegistry.register(new GlobTool(appConfig));
         }
+
+        // 规划工具（纯内存、无副作用），始终可用，无需 config 开关
+        toolRegistry.register(new TodoWriteTool());
 
         // 🔥 初始化 MCP 服务（如果启用）
         if (mcpConfig != null && mcpConfig.isEnabled()) {
