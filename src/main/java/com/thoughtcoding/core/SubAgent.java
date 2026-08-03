@@ -11,7 +11,7 @@ import com.thoughtcoding.model.SubagentTurn;
 import com.thoughtcoding.model.ToolCall;
 import com.thoughtcoding.model.ToolCallRef;
 import com.thoughtcoding.model.ToolResult;
-import com.thoughtcoding.tool.PermissionHook;
+import com.thoughtcoding.security.PermissionHook;
 import com.thoughtcoding.tool.ToolDispatcher;
 import com.thoughtcoding.ui.ThoughtCodingUI;
 

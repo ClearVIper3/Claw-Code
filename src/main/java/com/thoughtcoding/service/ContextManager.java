@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.thoughtcoding.config.AppConfig;
 import com.thoughtcoding.model.ChatMessage;
+import com.thoughtcoding.skill.SkillRegistry;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.model.openai.OpenAiChatModel;
@@ -28,6 +29,7 @@ public class ContextManager {
     private static final Logger log = LoggerFactory.getLogger(ContextManager.class);
 
     private final AppConfig appConfig;
+    private final SkillRegistry skillRegistry;
 
     // 默认配置
     private static final int DEFAULT_MAX_HISTORY_TURNS = 10;  // 保留10轮（20条消息）
@@ -51,8 +53,9 @@ public class ContextManager {
 
     private OpenAiChatModel ChatModel;
 
-    public ContextManager(AppConfig appConfig) {
+    public ContextManager(AppConfig appConfig, SkillRegistry skillRegistry) {
         this.appConfig = appConfig;
+        this.skillRegistry = skillRegistry;
         this.objectMapper = new ObjectMapper()
                 .enable(SerializationFeature.INDENT_OUTPUT)
                 .disable(SerializationFeature.FAIL_ON_EMPTY_BEANS);
@@ -168,7 +171,18 @@ public class ContextManager {
         sb.append("2. 改动已有文件优先用 edit；新建/覆盖用 write；读文件用 read；跑命令或搜索内容用 bash。\n");
         sb.append("3. 只在确有需要时调用工具；纯咨询类问题直接用中文回答，不调用工具。\n");
         sb.append("4. 完成任务后用简洁自然的中文给出总结。\n");
+
+        appendSkillCatalog(sb);
         return sb.toString();
+    }
+
+    /** 技能目录（名称+简介）常驻注入 system prompt；完整正文由模型显式调用 skill 工具按需加载。 */
+    private void appendSkillCatalog(StringBuilder sb) {
+        if (skillRegistry != null && !skillRegistry.isEmpty()) {
+            sb.append("\n## 可用技能 (Skills)\n");
+            sb.append("以下技能可通过 skill 工具按需加载完整说明后使用：\n");
+            sb.append(skillRegistry.catalog()).append("\n");
+        }
     }
 
     /**
@@ -194,6 +208,8 @@ public class ContextManager {
         sb.append("1. 需要操作时直接调用系统提供的工具（其名称/说明/参数已由系统注入），不要把工具名写进普通文本，也不要编造工具结果。\n");
         sb.append("2. 改动已有文件优先用 edit；新建/覆盖用 write；读文件用 read；跑命令或搜索内容用 bash。\n");
         sb.append("3. 完成后用简洁的中文给出最终结论——这段结论是唯一会回传给主Agent的内容，中间过程不会保留，务必把关键结果讲清楚。\n");
+
+        appendSkillCatalog(sb);
         return sb.toString();
     }
 

@@ -5,7 +5,7 @@ import com.thoughtcoding.config.AppConfig;
 import com.thoughtcoding.exception.WorkspaceSecurityException;
 import com.thoughtcoding.model.ToolResult;
 import com.thoughtcoding.tool.BaseTool;
-import com.thoughtcoding.tool.Sandbox;
+import com.thoughtcoding.security.Sandbox;
 import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
 
 import java.io.IOException;
@@ -36,11 +36,6 @@ public class ReadTool extends BaseTool {
                 .required("path")
                 .additionalProperties(false)
                 .build();
-    }
-
-    @Override
-    public boolean isReadOnly() {
-        return true;
     }
 
     @Override
