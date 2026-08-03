@@ -155,7 +155,7 @@ public class ContextManager {
         StringBuilder sb = new StringBuilder();
         sb.append("## 指令\n");
         sb.append("- 始终用中文回答用户的所有问题，解释与代码注释也用中文。\n");
-        sb.append("- 你是一位资深编程助手（类似 Claude Code），可调用工具完成任务。\n\n");
+        sb.append("- 你是一位资深编程助手，可调用工具完成任务。\n\n");
 
         sb.append("## 工作环境\n");
         sb.append("工作目录: ").append(cwd).append("\n");
@@ -168,6 +168,32 @@ public class ContextManager {
         sb.append("2. 改动已有文件优先用 edit；新建/覆盖用 write；读文件用 read；跑命令或搜索内容用 bash。\n");
         sb.append("3. 只在确有需要时调用工具；纯咨询类问题直接用中文回答，不调用工具。\n");
         sb.append("4. 完成任务后用简洁自然的中文给出总结。\n");
+        return sb.toString();
+    }
+
+    /**
+     * 🔥 子Agent专用系统提示：风格对齐 {@link #buildNativeSystemPrompt}，
+     * 但强调「独立完成这一个任务、只回传最终结论」。
+     * 子Agent有自己隔离的对话历史、看不到主对话，故任务细节全在传入的 prompt 里。
+     * （递归无需在提示词里防：subAgent 工具已从子Agent可见的工具规格中过滤掉。）
+     */
+    public String buildSubagentSystemPrompt() {
+        String cwd = System.getProperty("user.dir");
+        StringBuilder sb = new StringBuilder();
+        sb.append("## 指令\n");
+        sb.append("- 始终用中文回答，解释与代码注释也用中文。\n");
+        sb.append("- 你是被主Agent派发的【子Agent】，负责独立、完整地完成下面这一个被指派的任务。\n");
+        sb.append("- 你看不到主对话历史，任务所需的全部信息都在给你的任务描述里。\n\n");
+
+        sb.append("## 工作环境\n");
+        sb.append("工作目录: ").append(cwd == null ? "" : cwd).append("\n");
+        sb.append("路径支持：相对路径、绝对路径、~ 用户主目录、.. 上级目录。\n");
+        sb.append("操作系统: ").append(System.getProperty("os.name")).append("\n\n");
+
+        sb.append("## 规则\n");
+        sb.append("1. 需要操作时直接调用系统提供的工具（其名称/说明/参数已由系统注入），不要把工具名写进普通文本，也不要编造工具结果。\n");
+        sb.append("2. 改动已有文件优先用 edit；新建/覆盖用 write；读文件用 read；跑命令或搜索内容用 bash。\n");
+        sb.append("3. 完成后用简洁的中文给出最终结论——这段结论是唯一会回传给主Agent的内容，中间过程不会保留，务必把关键结果讲清楚。\n");
         return sb.toString();
     }
 

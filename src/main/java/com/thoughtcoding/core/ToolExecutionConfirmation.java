@@ -31,7 +31,7 @@ public class ToolExecutionConfirmation {
      */
     public ActionType askConfirmationWithOptions(ToolExecution execution) {
         if (autoApproveMode) {
-            ui.displayInfo("🤖 [自动批准模式] 执行: " + execution.toolName());
+            ui.displayInfo("[自动批准模式] 执行: " + execution.toolName());
             return ActionType.YES;
         }
 
@@ -263,9 +263,9 @@ public class ToolExecutionConfirmation {
     public void setAutoApproveMode(boolean enabled) {
         this.autoApproveMode = enabled;
         if (enabled) {
-            ui.displayInfo("🤖 自动批准模式已启用");
+            ui.displayInfo("自动批准模式已启用");
         } else {
-            ui.displayInfo("👤 交互式确认模式已启用");
+            ui.displayInfo("交互式确认模式已启用");
         }
     }
 
