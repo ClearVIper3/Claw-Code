@@ -2,8 +2,7 @@ package com.thoughtcoding.cli;
 
 import com.thoughtcoding.mcp.MCPService;
 import com.thoughtcoding.mcp.MCPToolManager;
-import com.thoughtcoding.tools.BaseTool;
-import lombok.extern.slf4j.Slf4j;
+import com.thoughtcoding.tool.BaseTool;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 

@@ -1,4 +1,4 @@
-package com.thoughtcoding.tools;
+package com.thoughtcoding.tool;
 
 import com.thoughtcoding.model.ToolResult;
 import dev.langchain4j.model.chat.request.json.JsonObjectSchema;

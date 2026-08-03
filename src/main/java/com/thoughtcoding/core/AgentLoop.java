@@ -6,8 +6,9 @@ import com.thoughtcoding.model.ToolCall;
 import com.thoughtcoding.model.ToolExecution;
 import com.thoughtcoding.model.ToolResult;
 import com.thoughtcoding.service.PerformanceMonitor;
-import com.thoughtcoding.tools.BaseTool;
-import com.thoughtcoding.tools.ToolDispatcher;
+import com.thoughtcoding.tool.PermissionGate;
+import com.thoughtcoding.tool.PermissionResult;
+import com.thoughtcoding.tool.ToolDispatcher;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -16,7 +17,7 @@ import java.util.List;
  * AI 交互的核心循环。
  *
  * 基于 langchain4j 原生 function calling 的多轮 agentic 循环：
- * 用户输入 → 模型响应（可能请求工具）→ 执行工具（仅写/执行类确认）→ 结果按 id 配对回喂 →
+ * 用户输入 → 模型响应（可能请求工具）→ 权限检查 → 执行工具（写/执行类 + 越界只读类确认）→ 结果按 id 配对回喂 →
  * 无新输入再问模型，直到模型不再请求工具、用户取消、或达到 maxToolIterations。
  */
 public class AgentLoop {
@@ -25,7 +26,7 @@ public class AgentLoop {
     private final String sessionId;
     private final String modelName;
     private final ToolExecutionConfirmation confirmation;  // 交互式确认组件
-    private final ToolDispatcher toolDispatcher;           // 工具执行唯一收口（沙箱插桩点）
+    private final ToolDispatcher toolDispatcher;
 
     // 缓存本轮模型请求的工具调用（原生路径一轮可能有多个）
     private final List<ToolCall> pendingToolCalls = new ArrayList<>();
@@ -96,6 +97,9 @@ public class AgentLoop {
             pendingToolCalls.clear();
             // 一轮模型响应（无新用户输入；用户消息与历史已在 history 中）
             context.getAiService().streamingChat(null, history, modelName);
+            // 空一行，避免与后续工具确认/结果挤在一起
+            context.getUi().getTerminal().writer().println();
+            context.getUi().getTerminal().flush();
 
             if (pendingToolCalls.isEmpty()) {
                 break; // 模型只产出文本 → 自然终止
@@ -112,8 +116,19 @@ public class AgentLoop {
                     continue;
                 }
 
-                // 仅写/执行类需要确认（除非处于自动批准模式）
-                if (requiresConfirmation(call) && !confirmation.isAutoApproveMode()) {
+                // ── 权限决策：DENY → 拒绝 | WARN → 确认 | ALLOW → 放行 ──
+                PermissionResult perm = PermissionGate.check(
+                    call.getToolName(), call.getParameters());
+
+                if (perm.type() == PermissionResult.Type.DENY) {
+                    context.getUi().displayError(perm.message());
+                    history.add(ChatMessage.toolResult(
+                        call.getProviderCallId(), call.getToolName(), perm.message()));
+                    continue;
+                }
+
+                if (perm.type() == PermissionResult.Type.WARN
+                    && !confirmation.isAutoApproveMode()) {
                     ToolExecution exec = new ToolExecution(
                             call.getToolName(),
                             call.getDescription() != null ? call.getDescription() : "执行工具操作",
@@ -132,6 +147,8 @@ public class AgentLoop {
                 // 执行并把结果按 id 配对写回 history
                 ToolResult result = toolDispatcher.dispatch(call);
                 displayNativeToolResult(call, result);
+                // 工具结果显示后空一行，避免与下一轮 AI 流式文本挤在同一区域
+                context.getUi().getTerminal().writer().println();
                 String resultText = result.isSuccess()
                         ? (result.getOutput() == null || result.getOutput().isBlank()
                             ? "执行成功（无输出）。" : result.getOutput())
@@ -152,17 +169,6 @@ public class AgentLoop {
                 break;
             }
         }
-    }
-
-    /** 写/执行类工具需要确认；只读工具（由工具自身 isReadOnly() 声明）静默放行。 */
-    private boolean requiresConfirmation(ToolCall call) {
-        String name = call.getToolName();
-        if (name == null) {
-            return true;
-        }
-        BaseTool tool = context.getToolRegistry().getTool(name);
-        // 未知/MCP 工具（未声明只读）默认需确认；工具自身声明 isReadOnly 则静默放行。
-        return tool == null || !tool.isReadOnly();
     }
 
     private String describeTool(ToolCall call) {

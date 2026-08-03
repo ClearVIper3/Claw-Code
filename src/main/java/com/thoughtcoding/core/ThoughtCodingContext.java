@@ -10,12 +10,13 @@ import com.thoughtcoding.service.ContextManager;
 import com.thoughtcoding.service.LangChainService;
 import com.thoughtcoding.service.PerformanceMonitor;
 import com.thoughtcoding.service.SessionService;
-import com.thoughtcoding.tools.*;
-import com.thoughtcoding.tools.BashTool;
-import com.thoughtcoding.tools.EditTool;
-import com.thoughtcoding.tools.ReadTool;
-import com.thoughtcoding.tools.WriteTool;
-import com.thoughtcoding.tools.GlobTool;
+import com.thoughtcoding.tool.*;
+import com.thoughtcoding.tool.tools.BashTool;
+import com.thoughtcoding.tool.tools.EditTool;
+import com.thoughtcoding.tool.tools.GlobTool;
+import com.thoughtcoding.tool.tools.ReadTool;
+import com.thoughtcoding.tool.Sandbox;
+import com.thoughtcoding.tool.tools.WriteTool;
 import com.thoughtcoding.ui.ThoughtCodingUI;
 
 import java.util.ArrayList;
@@ -67,6 +68,9 @@ public class ThoughtCodingContext {
         configManager.initialize("config.yaml");
         AppConfig appConfig = configManager.getAppConfig();
         MCPConfig mcpConfig = configManager.getMCPConfig();
+
+        // 初始化沙箱（以启动时的工作目录为 workspace 根）
+        Sandbox.init(System.getProperty("user.dir"));
 
         // 能力层初始化,创建工具注册表
         ToolRegistry toolRegistry = new ToolRegistry(appConfig);

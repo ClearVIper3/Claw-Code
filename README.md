@@ -560,32 +560,32 @@ cd ThoughtCoding
 继承 `BaseTool` 基类并实现核心方法：
 
 ```java
-package com.thoughtcoding.tools;
+package com.thoughtcoding.tool;
 
 import com.thoughtcoding.model.ToolResult;
 import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
 
 public class MyTool extends BaseTool {
-    
+
     public MyTool() {
         super("my_tool", "工具描述");
     }
-    
+
     @Override
     public ToolResult execute(String input) {
         // input 为 JSON 字符串，从 ToolDispatcher 传入
         // 工具实现逻辑
         return success("工具执行结果");
     }
-    
+
     @Override
     public JsonObjectSchema inputSchema() {
         // 定义工具参数 schema（供模型了解参数结构）
         return JsonObjectSchema.builder()
-            .addStringProperty("param1", "参数1描述")
-            .build();
+                .addStringProperty("param1", "参数1描述")
+                .build();
     }
-    
+
     @Override
     public boolean isReadOnly() {
         // 只读工具返回 true，静默放行无需用户确认

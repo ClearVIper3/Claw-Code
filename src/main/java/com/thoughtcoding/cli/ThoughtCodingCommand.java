@@ -301,6 +301,7 @@ public class ThoughtCodingCommand implements Callable<Integer> {
                 }
 
                 // 🚀 新增：检查是否是直接命令执行
+                //TODO ：优化正则检测，降低误判率
                 if (directCommandExecutor.shouldExecuteDirectly(trimmedInput)) {
                     directCommandExecutor.executeDirectCommand(trimmedInput);
                     continue;

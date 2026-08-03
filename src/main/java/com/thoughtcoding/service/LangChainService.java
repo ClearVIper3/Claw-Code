@@ -4,7 +4,7 @@ import com.thoughtcoding.config.AppConfig;
 import com.thoughtcoding.model.ChatMessage;
 import com.thoughtcoding.model.ToolCall;
 import com.thoughtcoding.model.ToolCallRef;
-import com.thoughtcoding.tools.ToolRegistry;
+import com.thoughtcoding.tool.ToolRegistry;
 import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.model.chat.response.StreamingChatResponseHandler;
 import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
@@ -171,7 +171,6 @@ public class LangChainService implements AIService {
                             history.add(new ChatMessage("assistant", text));
                         }
                     }
-                    System.out.println();
                 } finally {
                     isGenerating = false;
                     shouldStop = false;

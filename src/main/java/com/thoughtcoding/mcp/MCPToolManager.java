@@ -1,9 +1,7 @@
 package com.thoughtcoding.mcp;
 
 import com.thoughtcoding.config.MCPConfig;
-import com.thoughtcoding.config.MCPServerConfig;
-import com.thoughtcoding.tools.BaseTool;
-import lombok.extern.slf4j.Slf4j;
+import com.thoughtcoding.tool.BaseTool;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
