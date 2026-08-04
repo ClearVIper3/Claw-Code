@@ -95,7 +95,8 @@ public class MemoryService {
 
         String catalog = buildCatalog();
         String prompt = "给定下面的最近对话和记忆目录，挑选其中<b>明确相关</b>的记忆条目的索引号。"
-                + "只返回一个 JSON 数组，例如 [0, 3]；都不相关则返回 []。\n\n"
+                + "只返回一个 JSON 数组，例如 [0, 3]；都不相关则返回 []。"
+                + "索引必须是记忆目录中真实存在的编号（范围 0 到 N-1，N 为目录条数），不要返回越界的索引。\n\n"
                 + "最近对话:\n" + recent + "\n\n"
                 + "记忆目录:\n" + catalog;
 
