@@ -28,6 +28,16 @@ ai:
   perResultPersistBytes: 30000  # L3：触发后只落盘单条超过此字节数的结果，留标记+预览+磁盘路径
   l4KeepTail: 6                 # L4：摘要后接回的最近 N 条
 
+# —— 记忆系统（Memory，非工具）：LLM 驱动 召回注入 / 储存 / 整理 dream ——
+# 存储于 <工作目录>/.memory/（MEMORY.md 索引 + 单条 .md，随项目走）。
+# 索引（name+简介）常驻注入 system prompt；相关记忆全文由 LLM 每轮召回后注入；轮末自动抽取新记忆。
+memory:
+  enabled: true                 # 总开关：加载 .memory/ + 索引注入 + 召回/储存/整理
+  autoExtract: true             # 每轮对话结束后自动抽取新记忆（需一次模型往返，可关）
+  consolidateThreshold: 10      # 记忆文件数达到此值触发 LLM 整合去重（0=禁用）
+  maxIndexEntries: 200          # MEMORY.md 索引条数上限（超限裁掉最早写入的）
+  maxPerTurnInjections: 5       # 单轮自动注入的相关记忆条数上限
+
 tools:
   bash:
     enabled: true
