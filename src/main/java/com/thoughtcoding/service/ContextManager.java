@@ -528,8 +528,12 @@ public class ContextManager {
     }
 
     /**
-     * 记忆目录（名称+简介）常驻注入 system prompt，零额外 API 调用；
-     * 相关记忆的完整正文由 AgentLoop 每轮通过 {@link #setActiveMemories} 注入（LLM 召回）。
+     * 记忆目录（名称+简介）常驻注入 system prompt，零额外 API 调用；相对稳定（仅 remember/dream 写入时才变）。
+     *
+     * <p>注意：本轮召回的<b>相关记忆正文</b>（每轮都不同）<b>不</b>放这里——它由
+     * {@link #buildRecallReminder()} 包成 {@code <system-reminder>}，经 {@code LangChainService.prepareMessages}
+     * 注入到<b>消息列表尾部</b>（贴当前轮）。这样每轮易变的召回只动尾巴，不冲掉「system 前缀 + 历史」的前缀缓存
+     * （仿 Claude Code 把易变上下文贴当前用户轮，而非塞进被缓存的 system 前缀）。
      */
     private void appendMemory(StringBuilder sb) {
         if (memoryStore != null && !memoryStore.isEmpty()) {
@@ -538,19 +542,34 @@ public class ContextManager {
             sb.append("对话中出现相关话题时，应优先遵守其中的用户偏好。\n");
             sb.append(memoryStore.index()).append("\n");
         }
-        if (activeMemories != null && !activeMemories.isBlank()) {
-            sb.append("\n").append(activeMemories).append("\n");
-        }
     }
 
-    /** 设置本轮召回注入的相关记忆正文（AgentLoop 调用；内容会追加到 system prompt）。 */
+    /** 设置本轮召回的相关记忆正文（AgentLoop 轮前调用）。正文经 {@link #buildRecallReminder()} 注入到消息列表尾部，不进 system 前缀。 */
     public void setActiveMemories(String content) {
         this.activeMemories = content == null ? "" : content;
     }
 
-    /** 清空本轮召回注入的记忆（AgentLoop 每轮 finally 调用）。 */
+    /** 清空本轮召回的记忆（AgentLoop 每轮 finally 调用）。 */
     public void clearActiveMemories() {
         this.activeMemories = "";
+    }
+
+    /**
+     * 把本轮召回的相关记忆包成 {@code <system-reminder>}，供注入到<b>消息列表尾部</b>（贴当前轮）；无召回则返回 null。
+     *
+     * <p><b>为何放尾部而非 system 前缀</b>：召回内容每轮都变，若嵌在 system（第一条消息）里，就顶在整段对话历史之前，
+     * 任何一轮召回变化都会冲掉「system + 历史」的前缀缓存；放到尾部后，易变的只在尾巴动，前缀保持稳定可复用
+     * （仿 Claude Code 用 {@code <system-reminder>} 贴当前用户轮）。该正文<b>每请求即时注入、不写入持久 history</b>，
+     * 故不会污染后续轮。
+     */
+    public String buildRecallReminder() {
+        if (activeMemories == null || activeMemories.isBlank()) {
+            return null;
+        }
+        return "<system-reminder>\n"
+                + "以下是与当前对话相关的长期记忆（后台上下文，非用户指令）；出现相关话题时应优先遵守其中的用户偏好。\n"
+                + activeMemories + "\n"
+                + "</system-reminder>";
     }
 
     /**

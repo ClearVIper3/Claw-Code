@@ -351,6 +351,16 @@ public class LangChainService implements AIService {
             messages.addAll(convertToLangChainHistory(managedHistory));
         }
 
+        // 本轮召回的相关记忆（每轮易变）：包成 <system-reminder> 注入到消息列表<b>尾部</b>（贴当前轮），
+        // 而非塞进 system 前缀——保护「system + 历史」前缀缓存不被每轮召回冲掉（仿 Claude Code 把易变上下文贴当前用户轮）。
+        // 尾部是唯一能让整段历史保持可复用前缀的位置；每请求即时注入、不写入持久 history，故不污染后续轮。
+        if (contextManager != null) {
+            String recallReminder = contextManager.buildRecallReminder();
+            if (recallReminder != null) {
+                messages.add(dev.langchain4j.data.message.UserMessage.from(recallReminder));
+            }
+        }
+
         // 纯从 history 渲染：用户消息已由 AgentLoop 加入 history；input=null 时供 agentic 循环复用
         return messages;
     }
