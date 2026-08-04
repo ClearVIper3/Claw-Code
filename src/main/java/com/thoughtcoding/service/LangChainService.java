@@ -21,6 +21,12 @@ import java.util.function.Consumer;
  *
  * 每次请求携带工具的 ToolSpecification；模型在 onCompleteResponse 返回结构化的
  * toolExecutionRequests，由 AgentLoop 执行并把结果按 id 配对回喂，形成 agentic 循环。
+ *
+ * TODO：错误恢复（s11 模块）尚未移植。参考教学模块 s11_error_recovery 的三条恢复路径：
+ *  1. 瞬时错误（429 限流 / 5xx 过载含 529 / 超时）→ 指数退避+抖动重试，连续 5xx 可切 fallback 模型；
+ *  2. 上下文过长（prompt too long）→ 强制压缩历史后重试一次（可复用 ContextManager 的四层压缩管线）；
+ *  3. 输出被 max_tokens 截断（finishReason=LENGTH）→ 首抬 maxOutputTokens 重发，仍截断则保留已生成文本 + 续写。
+ * 注意主路径是流式异步（streamingChatModel.chat + 回调），重试需避免「流式到一半已触发工具调用」的重复副作用。
  */
 public class LangChainService implements AIService {
     private final AppConfig appConfig;
