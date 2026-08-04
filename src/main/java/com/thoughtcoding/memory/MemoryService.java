@@ -232,7 +232,8 @@ public class MemoryService {
 
     /**
      * 记忆文件数达到阈值时，让 LLM 合并重复、清理过时、保留用户偏好，然后整体替换。
-     * consolidateThreshold <= 0 或数量不足则跳过；任何失败都静默，保留原记忆不丢。
+     * <b>目标上限就是 {@code consolidateThreshold}</b>（配置的触发阈值兼作 dream 压缩到的条数上限，
+     * 会写进 prompt 告诉 LLM）。任何失败都静默，保留原记忆不丢。
      */
     public void dream() {
         if (store == null || model == null || store.isEmpty()) {
@@ -249,10 +250,12 @@ public class MemoryService {
             catalog.append("description: ").append(m.description()).append('\n');
             catalog.append(m.body()).append("\n\n");
         }
+        // 目标条数 = consolidateThreshold（配置的触发阈值兼作 dream 的目标上限）
+        int targetCount = Math.max(1, consolidateThreshold);
         String prompt = "整合下面这些记忆文件:\n"
                 + "1. 重复的合并为一条\n"
                 + "2. 删除过时/被推翻的记忆\n"
-                + "3. 总数控制在 30 条以内\n"
+                + "3. 总数控制在 " + targetCount + " 条以内（若本来就少于 " + targetCount + " 条，保持不变即可）\n"
                 + "4. 用户偏好（type=user）优先保留\n"
                 + "返回一个 JSON 数组，每项 {name, type, description, body}。\n\n"
                 + catalog;
