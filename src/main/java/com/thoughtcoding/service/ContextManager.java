@@ -3,6 +3,7 @@ package com.thoughtcoding.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.thoughtcoding.config.AppConfig;
+import com.thoughtcoding.memory.MemoryStore;
 import com.thoughtcoding.model.ChatMessage;
 import com.thoughtcoding.skill.SkillRegistry;
 import com.thoughtcoding.util.FileUtils;
@@ -40,6 +41,10 @@ public class ContextManager {
 
     private final AppConfig appConfig;
     private final SkillRegistry skillRegistry;
+    private final MemoryStore memoryStore; // 记忆存储（可空 = 记忆功能关闭）
+
+    // 本轮召回注入的相关记忆正文（由 AgentLoop 设置/清除），附加到 system prompt 末尾
+    private volatile String activeMemories = "";
 
     // ── 四层管线参数（构造时从 config 读入，全部有默认值）──
     private int maxContextTokens = 48000;       // L4 触发阈值（估算 token）
@@ -66,9 +71,10 @@ public class ContextManager {
 
     private OpenAiChatModel ChatModel;
 
-    public ContextManager(AppConfig appConfig, SkillRegistry skillRegistry) {
+    public ContextManager(AppConfig appConfig, SkillRegistry skillRegistry, MemoryStore memoryStore) {
         this.appConfig = appConfig;
         this.skillRegistry = skillRegistry;
+        this.memoryStore = memoryStore;
         this.objectMapper = new ObjectMapper()
                 .enable(SerializationFeature.INDENT_OUTPUT)
                 .disable(SerializationFeature.FAIL_ON_EMPTY_BEANS);
@@ -507,6 +513,7 @@ public class ContextManager {
         sb.append("4. 完成任务后用简洁自然的中文给出总结。\n");
 
         appendSkillCatalog(sb);
+        appendMemory(sb);
         return sb.toString();
     }
 
@@ -517,6 +524,32 @@ public class ContextManager {
             sb.append("以下技能可通过 skill 工具按需加载完整说明后使用：\n");
             sb.append(skillRegistry.catalog()).append("\n");
         }
+    }
+
+    /**
+     * 记忆目录（名称+简介）常驻注入 system prompt，零额外 API 调用；
+     * 相关记忆的完整正文由 AgentLoop 每轮通过 {@link #setActiveMemories} 注入（LLM 召回）。
+     */
+    private void appendMemory(StringBuilder sb) {
+        if (memoryStore != null && !memoryStore.isEmpty()) {
+            sb.append("\n## 可用记忆 (Memories)\n");
+            sb.append("以下是你长期记住的用户偏好/项目事实/反馈约定（跨会话保留）。\n");
+            sb.append("对话中出现相关话题时，应优先遵守其中的用户偏好。\n");
+            sb.append(memoryStore.index()).append("\n");
+        }
+        if (activeMemories != null && !activeMemories.isBlank()) {
+            sb.append("\n").append(activeMemories).append("\n");
+        }
+    }
+
+    /** 设置本轮召回注入的相关记忆正文（AgentLoop 调用；内容会追加到 system prompt）。 */
+    public void setActiveMemories(String content) {
+        this.activeMemories = content == null ? "" : content;
+    }
+
+    /** 清空本轮召回注入的记忆（AgentLoop 每轮 finally 调用）。 */
+    public void clearActiveMemories() {
+        this.activeMemories = "";
     }
 
     /**

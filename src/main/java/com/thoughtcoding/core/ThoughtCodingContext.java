@@ -5,6 +5,8 @@ import com.thoughtcoding.config.ConfigManager;
 import com.thoughtcoding.config.MCPConfig;
 import com.thoughtcoding.mcp.MCPService;
 import com.thoughtcoding.mcp.MCPToolManager;
+import com.thoughtcoding.memory.MemoryService;
+import com.thoughtcoding.memory.MemoryStore;
 import com.thoughtcoding.service.AIService;
 import com.thoughtcoding.service.ContextManager;
 import com.thoughtcoding.service.LangChainService;
@@ -51,6 +53,9 @@ public class ThoughtCodingContext {
     // 🔥 新增上下文管理器
     private final ContextManager contextManager;
 
+    // 🔥 新增记忆系统（LLM 驱动：召回/储存/整理；非工具）
+    private final MemoryService memoryService;
+
     private ThoughtCodingContext(Builder builder) {
         this.appConfig = builder.appConfig;
         this.mcpConfig = builder.mcpConfig;
@@ -62,6 +67,7 @@ public class ThoughtCodingContext {
         this.mcpService = builder.mcpService;
         this.mcpToolManager = builder.mcpToolManager;
         this.contextManager = builder.contextManager;
+        this.memoryService = builder.memoryService;
     }
 
     public static ThoughtCodingContext initialize() {
@@ -122,7 +128,23 @@ public class ThoughtCodingContext {
         }
 
         // 服务层初始化
-        ContextManager contextManager = new ContextManager(appConfig, skillRegistry);  // 🔥 创建上下文管理器
+        // ── 记忆系统（非工具）：LLM 驱动召回/储存/整理；memory.enabled=false 或内存分配失败则整体为 null ──
+        AppConfig.MemoryConfig memCfg = appConfig.getMemory();
+        MemoryStore memoryStore = null;
+        MemoryService memoryService = null;
+        if (memCfg != null && memCfg.isEnabled()) {
+            try {
+                memoryStore = MemoryStore.load(
+                        java.nio.file.Paths.get(System.getProperty("user.dir"), ".memory"),
+                        memCfg.getMaxIndexEntries());
+                memoryService = new MemoryService(appConfig, memoryStore, memCfg);
+            } catch (Exception e) {
+                // 记忆系统初始化失败不阻塞主对话
+                memoryStore = null;
+                memoryService = null;
+            }
+        }
+        ContextManager contextManager = new ContextManager(appConfig, skillRegistry, memoryStore);  // 🔥 创建上下文管理器
         AIService aiService = new LangChainService(appConfig, toolRegistry, contextManager);  // 🔥 注入 contextManager
         SessionService sessionService = new SessionService();
         PerformanceMonitor performanceMonitor = new PerformanceMonitor();
@@ -142,6 +164,7 @@ public class ThoughtCodingContext {
                 .mcpService(mcpService)
                 .mcpToolManager(mcpToolManager)
                 .contextManager(contextManager)  // 🔥 添加 contextManager
+                .memoryService(memoryService)   // 🔥 添加 memoryService（可为 null = 记忆关闭）
                 .build();
 
         // 🔥 子Agent 工具（subAgent）：需持有已构建好的 context 引用来派生隔离子循环，故在 build 之后注册。
@@ -302,6 +325,9 @@ public class ThoughtCodingContext {
 
     // 🔥 新增 contextManager Getter
     public ContextManager getContextManager() { return contextManager; }
+
+    // 🔥 新增 memoryService Getter（可为 null = 记忆功能关闭）
+    public MemoryService getMemoryService() { return memoryService; }
     public ThoughtCodingUI getUi() { return ui; }
     public PerformanceMonitor getPerformanceMonitor() { return performanceMonitor; }
 
@@ -329,6 +355,8 @@ public class ThoughtCodingContext {
         private MCPToolManager mcpToolManager;
         // 🔥 新增上下文管理器字段
         private ContextManager contextManager;
+        // 🔥 新增记忆系统字段
+        private MemoryService memoryService;
 
         public Builder appConfig(AppConfig appConfig) {
             this.appConfig = appConfig;
@@ -379,6 +407,12 @@ public class ThoughtCodingContext {
         // 🔥 新增 contextManager Builder 方法
         public Builder contextManager(ContextManager contextManager) {
             this.contextManager = contextManager;
+            return this;
+        }
+
+        // 🔥 新增 memoryService Builder 方法
+        public Builder memoryService(MemoryService memoryService) {
+            this.memoryService = memoryService;
             return this;
         }
 

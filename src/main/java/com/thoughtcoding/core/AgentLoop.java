@@ -4,6 +4,7 @@ import com.thoughtcoding.config.AppConfig;
 import com.thoughtcoding.hook.HookContext;
 import com.thoughtcoding.hook.HookRegistry;
 import com.thoughtcoding.hook.HookResult;
+import com.thoughtcoding.memory.MemoryService;
 import com.thoughtcoding.model.ChatMessage;
 import com.thoughtcoding.model.ToolCall;
 import com.thoughtcoding.model.ToolResult;
@@ -80,13 +81,26 @@ public class AgentLoop {
 
             history.add(new ChatMessage("user", input));
 
+            // ── 记忆：本轮开始前 LLM 召回相关记忆，注入 system prompt ──
+            MemoryService memory = context.getMemoryService();
+            if (memory != null) {
+                context.getContextManager().setActiveMemories(memory.recall(history));
+            }
+
             // 原生 function calling：多轮 agentic 循环
             runNativeToolLoop();
+
+            // ── 记忆：本轮结束后同步储存新记忆 + 触发条件时整理(dream) ──
+            if (memory != null) {
+                memory.remember(history);
+                memory.dream();
+            }
 
             context.getSessionService().saveSession(sessionId, history);
         } catch (Exception e) {
             context.getUi().displayError("Error processing input: " + e.getMessage());
         } finally {
+            context.getContextManager().clearActiveMemories();
             monitor.stop();
         }
     }
