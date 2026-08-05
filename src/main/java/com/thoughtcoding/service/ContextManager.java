@@ -541,6 +541,9 @@ public class ContextManager {
             sb.append("以下是你长期记住的用户偏好/项目事实/反馈约定（跨会话保留）。\n");
             sb.append("对话中出现相关话题时，应优先遵守其中的用户偏好。\n");
             sb.append(memoryStore.index()).append("\n");
+            sb.append("\n重要：这些记忆文件由记忆系统自动管理（轮次间自动抽取 remember、到达阈值自动整理 dream）。\n");
+            sb.append("【禁止】用 write / edit / bash 等任何工具直接创建、修改、删除 .memory/ 目录下的记忆文件；\n");
+            sb.append("如需新增或更新记忆，直接告知用户，由记忆系统自动完成，无需也不应手动操作这些文件。\n");
         }
     }
 
