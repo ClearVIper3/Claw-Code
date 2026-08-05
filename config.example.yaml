@@ -36,6 +36,12 @@ memory:
   maxIndexEntries: 200          # MEMORY.md 索引条数上限（超限裁掉最早写入的）
   maxPerTurnInjections: 5       # 单轮自动注入的相关记忆条数上限
 
+# —— 任务系统（Task，确定性 CRUD，非工具开关）——
+# 存储于 <工作目录>/.tasks/（每个任务一个 <id>.json + .seq 计数），跨会话保留。
+# 取代旧 todo_write：6 个工具 task_create/list/get/update/claim/complete，支持 blockedBy 依赖图 + owner/claim 生命周期。
+tasks:
+  enabled: true                 # 总开关：装配任务系统（加载 .tasks/ + 注册 6 个 task 工具 + 注入未完成摘要）
+
 tools:
   bash:
     enabled: true

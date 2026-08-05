@@ -32,6 +32,9 @@ public class AppConfig {
     @JsonProperty("memory")
     private MemoryConfig memory = new MemoryConfig(); // 记忆系统配置
 
+    @JsonProperty("tasks")
+    private TaskConfig tasks = new TaskConfig(); // 任务系统配置
+
 
     // Getters and Setters
     public Map<String, ModelConfig> getModels() {
@@ -81,6 +84,17 @@ public class AppConfig {
 
     public void setMemory(MemoryConfig memory) {
         this.memory = memory;
+    }
+
+    public TaskConfig getTasks() {
+        if (tasks == null) {
+            tasks = new TaskConfig();
+        }
+        return tasks;
+    }
+
+    public void setTasks(TaskConfig tasks) {
+        this.tasks = tasks;
     }
 
 
@@ -469,6 +483,24 @@ public class AppConfig {
 
         public void setMaxPerTurnInjections(int maxPerTurnInjections) {
             this.maxPerTurnInjections = maxPerTurnInjections;
+        }
+    }
+
+    /**
+     * 任务(task)系统配置 —— 确定性 CRUD 任务图（落盘 .tasks/），非 LLM 驱动、不是工具开关——
+     * 工具在 ThoughtCodingContext 按本配置条件注册（对齐 memory 的装配方式）。
+     */
+    @Data
+    public static class TaskConfig {
+        @JsonProperty("enabled")
+        private boolean enabled = true; // 总开关：装配任务系统（加载 .tasks/、注册 6 个 task 工具、注入未完成摘要）
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
         }
     }
 }

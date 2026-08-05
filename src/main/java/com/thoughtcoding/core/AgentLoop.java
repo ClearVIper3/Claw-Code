@@ -25,7 +25,7 @@ import java.util.Set;
  */
 public class AgentLoop {
     /** 只读工具：结果回喂模型即可，不在用户端 dump 内容（避免刷屏）。 */
-    private static final Set<String> QUIET_OUTPUT_TOOLS = Set.of("read", "glob", "skill");
+    private static final Set<String> QUIET_OUTPUT_TOOLS = Set.of("read", "glob", "skill", "task_get");
 
     private final ThoughtCodingContext context;
     private final List<ChatMessage> history;

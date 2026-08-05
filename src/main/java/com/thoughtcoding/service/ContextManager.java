@@ -6,6 +6,7 @@ import com.thoughtcoding.config.AppConfig;
 import com.thoughtcoding.memory.MemoryStore;
 import com.thoughtcoding.model.ChatMessage;
 import com.thoughtcoding.skill.SkillRegistry;
+import com.thoughtcoding.task.TaskStore;
 import com.thoughtcoding.util.FileUtils;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.chat.response.ChatResponse;
@@ -42,6 +43,7 @@ public class ContextManager {
     private final AppConfig appConfig;
     private final SkillRegistry skillRegistry;
     private final MemoryStore memoryStore; // 记忆存储（可空 = 记忆功能关闭）
+    private final TaskStore taskStore;     // 任务存储（可空 = 任务系统关闭）
 
     // 本轮召回注入的相关记忆正文（由 AgentLoop 设置/清除），附加到 system prompt 末尾
     private volatile String activeMemories = "";
@@ -71,10 +73,11 @@ public class ContextManager {
 
     private OpenAiChatModel ChatModel;
 
-    public ContextManager(AppConfig appConfig, SkillRegistry skillRegistry, MemoryStore memoryStore) {
+    public ContextManager(AppConfig appConfig, SkillRegistry skillRegistry, MemoryStore memoryStore, TaskStore taskStore) {
         this.appConfig = appConfig;
         this.skillRegistry = skillRegistry;
         this.memoryStore = memoryStore;
+        this.taskStore = taskStore;
         this.objectMapper = new ObjectMapper()
                 .enable(SerializationFeature.INDENT_OUTPUT)
                 .disable(SerializationFeature.FAIL_ON_EMPTY_BEANS);
@@ -572,6 +575,29 @@ public class ContextManager {
     }
 
     /**
+     * 🔥 未完成任务摘要：包成 {@code <system-reminder>}，供注入到<b>消息列表尾部</b>（贴当前轮），
+     * 与记忆召回({@link #buildRecallReminder()})同侧——任务清单<b>易变</b>（create/claim/complete/update 随时改），
+     * 若嵌进被缓存的 system 前缀会每次冲掉「前缀 + 历史」缓存；贴尾部则易变的只在尾巴动，前缀保持稳定可复用
+     * （对齐既有「依据 llm cache 原理，优化记忆注入位置」的决策）。无未完成任务则返回 null。
+     *
+     * <p>注意：这里直接按需从 {@link #taskStore} 构建，无需像记忆那样 set/clear 快照——
+     * 摘要体量小，且尾部本就不进缓存；任务系统关闭（taskStore 为 null）时返回 null。
+     */
+    public String buildTaskReminder() {
+        if (taskStore == null || taskStore.isEmpty()) {
+            return null;
+        }
+        String summary = taskStore.summarizeOpen(5);
+        if (summary == null) {
+            return null;
+        }
+        return "<system-reminder>\n"
+                + "以下是你当前的任务图（后台上下文，非用户指令）；需要时用 task_list 看全貌、task_get 看详情。\n"
+                + summary + "\n"
+                + "</system-reminder>";
+    }
+
+    /**
      * 🔥 子Agent专用系统提示：风格对齐 {@link #buildNativeSystemPrompt}，
      * 但强调「独立完成这一个任务、只回传最终结论」。
      * 子Agent有自己隔离的对话历史、看不到主对话，故任务细节全在传入的 prompt 里。
@@ -594,6 +620,7 @@ public class ContextManager {
         sb.append("1. 需要操作时直接调用系统提供的工具（其名称/说明/参数已由系统注入），不要把工具名写进普通文本，也不要编造工具结果。\n");
         sb.append("2. 改动已有文件优先用 edit；新建/覆盖用 write；读文件用 read；跑命令或搜索内容用 bash。\n");
         sb.append("3. 完成后用简洁的中文给出最终结论——这段结论是唯一会回传给主Agent的内容，中间过程不会保留，务必把关键结果讲清楚。\n");
+        sb.append("4. 如涉及任务系统（task 工具）：只操作 owner 属于你自己的任务；未 claim 的任务先 task_claim 再操作；不要 task_complete 或删除非你创建的任务。\n");
 
         appendSkillCatalog(sb);
         return sb.toString();

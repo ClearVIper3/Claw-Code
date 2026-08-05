@@ -68,9 +68,12 @@ ThoughtCoding/
 │   │       ├── WriteTool.java           # 文件创建/覆写
 │   │       ├── EditTool.java            # 精确字符串替换（\r\n 自动规范化）
 │   │       ├── GlobTool.java            # 文件名搜索（walkFileTree，跳过 node_modules）
-│   │       ├── TodoWriteTool.java       # 内存待办清单（跨调用状态）
 │   │       ├── SkillTool.java           # 加载 skills/*/SKILL.md
 │   │       └── SubAgentTool.java        # 派发隔离子 Agent
+│   ├── 📁 task/                         # 任务系统（取代 todo_write：确定性 CRUD 任务图）
+│   │   ├── Task.java                    # 任务模型（id/subject/status/owner/blockedBy）
+│   │   ├── TaskStore.java               # 落盘 .tasks/ 的存储层（JSON 一任务一文件 + .seq 计数）
+│   │   └── tools/                       # task_create/list/get/update/claim/complete 六工具
 │   ├── 📁 security/                     # 🔐 权限与沙箱
 │   │   ├── PermissionGate.java          # 统一权限管道（按工具名决策 ALLOW/WARN/DENY）
 │   │   ├── PermissionHook.java          # 把权限检查挂进 Hook 链（PRE_TOOL_USE）
@@ -248,7 +251,7 @@ ThoughtCoding/
 `ToolExecutionConfirmation.java`
 
 - **功能**：工具执行确认组件
-- **特性**：写/执行类工具（write/edit/bash）执行前展示工具名和参数，YES/NO 两选项确认；read/glob 仅在路径越出 workspace 时弹确认；todo_write/skill/subAgent 恒静默放行；bash 另受 10 条 `BASH_DENY_PATTERNS` 硬拒绝模式直接 DENY
+- **特性**：写/执行类工具（write/edit/bash）执行前展示工具名和参数，YES/NO 两选项确认；read/glob 仅在路径越出 workspace 时弹确认；task 六工具/skill/subAgent 恒静默放行；bash 另受 10 条 `BASH_DENY_PATTERNS` 硬拒绝模式直接 DENY
 
 `DirectCommandExecutor.java`
 
@@ -305,7 +308,12 @@ ThoughtCoding/
 | `write` | 文件创建/覆写，自动建父目录 | `path`、`content` | 无任何大小上限；仅 workspace 内弹确认 |
 | `edit` | 精确字符串替换 | `path`、`old_string`、`new_string` | 自动规范化 `\r\n`→`\n`（Windows 上整文件行尾会被改写）；越界弹确认 |
 | `glob` | 文件名搜索，`walkFileTree` | `pattern`；`MAX_RESULTS=250`、`MAX_DEPTH=20`、跳过 `node_modules/.git/.svn/.hg` | workspace 内静默放行；无匹配返回 success 而非 error |
-| `todo_write` | 内存待办清单（跨调用状态） | `todos` 数组 | 仅存内存、进程退出即丢，不进会话持久化；恒静默放行 |
+| `task_create` | 创建任务并分配稳定 id，可选 blockedBy 依赖 | `subject`（必填）、`description`、`blockedBy`（id 数组） | 落盘 `.tasks/`；变更后向用户渲染清单 |
+| `task_list` | 列出全部任务（带 ✓/▸/○ 与 ⛔ 阻塞标记） | 无参 | 读 `.tasks/`；输出即清单 |
+| `task_get` | 单个任务完整 JSON 明细 | `id`（必填） | 结果不 dump 到终端但全量回喂模型 |
+| `task_update` | 编辑字段/依赖边/删除/异常状态修正 | `id` + 可选 `subject`/`description`/`owner`/`addBlockedBy`/`addBlocks`/`status` | 落盘；status=deleted 删除 |
+| `task_claim` | 认领任务（带依赖守卫，pending→in_progress） | `id`、`owner`（可选） | 被依赖阻塞则报错并列出缺失依赖 |
+| `task_complete` | 完成任务（in_progress→completed）并报告解锁下游 | `id` | 落盘；守卫：仅 in_progress 可完成 |
 | `skill` | 加载 `skills/*/SKILL.md` | `name`（enum 约束，仅限已扫描到的技能名） | `skills/` 目录非空时才注册；结果不 dump 但回喂 |
 | `subAgent` | 派发隔离子 Agent 执行子任务 | `description`、`prompt`、`subagentType` | 过滤自身 spec 防递归；结论回传主循环，过程不 dump |
 
@@ -318,7 +326,7 @@ ThoughtCoding/
 `PermissionGate.java`
 
 - **功能**：统一权限管道
-- **特性**：`check` 按工具名 switch 决策 `ALLOW`/`WARN`/`DENY`——write/edit/bash 固定 WARN（弹确认），read/glob 越界才 WARN，todo_write/skill/subAgent 恒 ALLOW，未知工具 WARN；bash 先过 `BASH_DENY_PATTERNS` 硬 DENY。注意 `Sandbox.resolve` 仅做路径规范化、**不拦截越界**，写操作可落在 workspace 之外
+- **特性**：`check` 按工具名 switch 决策 `ALLOW`/`WARN`/`DENY`——write/edit/bash 固定 WARN（弹确认），read/glob 越界才 WARN，task 六工具/skill/subAgent 恒 ALLOW，未知工具 WARN；bash 先过 `BASH_DENY_PATTERNS` 硬 DENY。注意 `Sandbox.resolve` 仅做路径规范化、**不拦截越界**，写操作可落在 workspace 之外
 
 `PermissionHook.java` / `PermissionResult.java`
 
@@ -488,7 +496,9 @@ mcp:
   - `write`: 文件创建/覆写工具（仅 workspace 内弹确认，无大小上限）
   - `edit`: 精确字符串替换工具（自动规范化 `\r\n`；越界弹确认）
   - `glob`: 文件名搜索工具（workspace 内静默放行，越界弹确认）
-  - **开关覆盖范围与无效字段**：`ToolRegistry.isToolEnabled` 的 switch 只覆盖 bash/read/write/edit/glob 五个名字，todo_write/skill/subAgent 与全部 MCP 工具无法经 `config.yaml` 关闭。`AppConfig.ToolConfig` 的 `allowedCommands`/`allowedLanguages` 字段为死配置（无任何读取点），实际不生效
+  - **开关覆盖范围与无效字段**：`ToolRegistry.isToolEnabled` 的 switch 只覆盖 bash/read/write/edit/glob 五个名字，task/skill/subAgent 与全部 MCP 工具无法经 `config.yaml` 关闭（任务系统另有 `tasks.enabled` 总开关，见下）。`AppConfig.ToolConfig` 的 `allowedCommands`/`allowedLanguages` 字段为死配置（无任何读取点），实际不生效
+- `tasks` : 任务系统配置（取代旧 todo_write）
+  - `enabled`: 总开关，装配任务系统——加载 `.tasks/`、注册 task_create/list/get/update/claim/complete 六工具、注入未完成任务摘要；默认 true
 
 - `mcp` : MCP 功能配置
   - `enabled`: 是否启用 MCP 功能模块

@@ -19,7 +19,13 @@ import com.thoughtcoding.tool.tools.GlobTool;
 import com.thoughtcoding.tool.tools.ReadTool;
 import com.thoughtcoding.security.Sandbox;
 import com.thoughtcoding.skill.SkillRegistry;
-import com.thoughtcoding.tool.tools.TodoWriteTool;
+import com.thoughtcoding.task.TaskStore;
+import com.thoughtcoding.task.tools.TaskClaimTool;
+import com.thoughtcoding.task.tools.TaskCompleteTool;
+import com.thoughtcoding.task.tools.TaskCreateTool;
+import com.thoughtcoding.task.tools.TaskGetTool;
+import com.thoughtcoding.task.tools.TaskListTool;
+import com.thoughtcoding.task.tools.TaskUpdateTool;
 import com.thoughtcoding.tool.tools.SubAgentTool;
 import com.thoughtcoding.tool.tools.SkillTool;
 import com.thoughtcoding.tool.tools.WriteTool;
@@ -114,12 +120,29 @@ public class ThoughtCodingContext {
             toolRegistry.register(new GlobTool(appConfig));
         }
 
-        // 规划工具（纯内存、无副作用），始终可用，无需 config 开关
-        toolRegistry.register(new TodoWriteTool());
-
         // 技能加载工具：目录为空则不注册，不给模型一个永远查不到东西的工具
         if (!skillRegistry.isEmpty()) {
             toolRegistry.register(new SkillTool(skillRegistry));
+        }
+
+        // ── 任务系统（确定性 CRUD，落盘 .tasks/，无 LLM 层）：tasks.enabled=false 或初始化失败则整体为 null ──
+        AppConfig.TaskConfig taskCfg = appConfig.getTasks();
+        TaskStore taskStore = null;
+        if (taskCfg != null && taskCfg.isEnabled()) {
+            try {
+                taskStore = TaskStore.load(
+                        java.nio.file.Paths.get(System.getProperty("user.dir"), ".tasks"));
+                toolRegistry.register(new TaskCreateTool(taskStore));
+                toolRegistry.register(new TaskListTool(taskStore));
+                toolRegistry.register(new TaskGetTool(taskStore));
+                toolRegistry.register(new TaskUpdateTool(taskStore));
+                toolRegistry.register(new TaskClaimTool(taskStore));
+                toolRegistry.register(new TaskCompleteTool(taskStore));
+            } catch (Exception e) {
+                System.err.println("❌ 任务系统初始化失败: " + e.getMessage());
+                e.printStackTrace();
+                taskStore = null;
+            }
         }
 
         // 🔥 初始化 MCP 服务（如果启用）
@@ -144,7 +167,7 @@ public class ThoughtCodingContext {
                 memoryService = null;
             }
         }
-        ContextManager contextManager = new ContextManager(appConfig, skillRegistry, memoryStore);  // 🔥 创建上下文管理器
+        ContextManager contextManager = new ContextManager(appConfig, skillRegistry, memoryStore, taskStore);  // 🔥 创建上下文管理器
         AIService aiService = new LangChainService(appConfig, toolRegistry, contextManager);  // 🔥 注入 contextManager
         SessionService sessionService = new SessionService();
         PerformanceMonitor performanceMonitor = new PerformanceMonitor();

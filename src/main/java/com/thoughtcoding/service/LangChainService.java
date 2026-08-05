@@ -338,6 +338,14 @@ public class LangChainService implements AIService {
             }
         }
 
+        // 未完成任务摘要（每轮易变，与记忆召回同侧贴尾部，理由同上）：任务清单进 system 前缀会冲掉前缀缓存
+        if (contextManager != null) {
+            String taskReminder = contextManager.buildTaskReminder();
+            if (taskReminder != null) {
+                messages.add(dev.langchain4j.data.message.UserMessage.from(taskReminder));
+            }
+        }
+
         // 纯从 history 渲染：用户消息已由 AgentLoop 加入 history；input=null 时供 agentic 循环复用
         return messages;
     }

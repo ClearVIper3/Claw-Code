@@ -76,9 +76,12 @@ ThoughtCoding/
 │   │       ├── WriteTool.java         # 文件创建/覆写
 │   │       ├── EditTool.java          # 精确字符串替换
 │   │       ├── GlobTool.java          # 文件名搜索（walkFileTree）
-│   │       ├── TodoWriteTool.java     # 内存待办清单
 │   │       ├── SkillTool.java         # 加载 skills/*/SKILL.md
 │   │       └── SubAgentTool.java      # 派发隔离子 Agent
+│   ├── 📁 task/                       # 任务系统（取代 todo_write）：确定性 CRUD 任务图
+│   │   ├── Task.java                  # 任务模型（id/subject/status/owner/blockedBy）
+│   │   ├── TaskStore.java             # 落盘 .tasks/ 的存储层（JSON + .seq 计数）
+│   │   └── tools/                     # task_create/list/get/update/claim/complete
 │   │
 │   ├── security/                      # 权限与沙箱层
 │   │   ├── PermissionGate.java        # 统一权限管道（按工具名决策）
@@ -156,7 +159,7 @@ ThoughtCodingContext.initialize()  [静态工厂方法]
     ├── SkillRegistry.scan(<cwd>/skills)     # 先于工具，解析 SKILL.md
     ├── 创建 ToolRegistry(appConfig)
     ├── 按 config 开关注册 bash/read/write/edit/glob（各自 if enabled）
-    ├── 无条件注册 todo_write（TodoWriteTool）
+    ├── tasks.enabled 时注册 task 六工具（TaskCreateTool/TaskListTool/TaskGetTool/TaskUpdateTool/TaskClaimTool/TaskCompleteTool，共享一个 TaskStore）
     ├── skills 非空时注册 skill（SkillTool）
     ├── 注册 MCP 工具（MCPService.convertToBaseTools）
     ├── 创建 ContextManager、SessionService、PerformanceMonitor
@@ -213,13 +216,13 @@ AgentLoop.runNativeToolLoop 取出本轮所有 ToolCall（pendingToolCalls）
     └── PermissionHook → PermissionGate.check(toolName, path)
           ├── DENY（bash 命中 BASH_DENY_PATTERNS）→ 返回 BLOCK，跳过该工具
           ├── WARN（写/执行类或越界只读）→ 弹 ToolExecutionConfirmation，用户 YES/NO
-          └── ALLOW（只读在 workspace 内 / todo_write / skill / subAgent）→ 直接通过
+          └── ALLOW（只读在 workspace 内 / task 六工具 / skill / subAgent）→ 直接通过
     ↓ （BLOCK 则写一条拒绝结果并 continue）
 ToolDispatcher.dispatch(call)
     └── ToolRegistry.getTool(name) → 参数 Jackson 序列化为 JSON → BaseTool.execute(json)
     ↓
 具体工具.execute()（见 1.3 工具层清单）
-    ├── BashTool / ReadTool / WriteTool / EditTool / GlobTool / TodoWriteTool / SkillTool / SubAgentTool
+    ├── BashTool / ReadTool / WriteTool / EditTool / GlobTool / TaskCreateTool / TaskListTool / TaskGetTool / TaskUpdateTool / TaskClaimTool / TaskCompleteTool / SkillTool / SubAgentTool
     └── MCP 工具：MCPService.convertToBaseTools 产出的 BaseTool 匿名类 → callTool(server, name, params)
     ↓
 返回 ToolResult
@@ -447,7 +450,7 @@ ChatMessage.toolResult(providerCallId, ...) 写回 history（按 providerCallId 
 
 | 类型 | 工具示例 | 说明 |
 |------|---------|------|
-| **内置工具** | bash、read、write、edit、glob、todo_write、skill、subAgent | `tool/tools/` 下的 `BaseTool` 子类，Java 直接实现 |
+| **内置工具** | bash、read、write、edit、glob、task_create、task_list、task_get、task_update、task_claim、task_complete、skill、subAgent | `tool/tools/` 与 `task/tools/` 下的 `BaseTool` 子类，Java 直接实现 |
 | **MCP工具** | filesystem、github、postgres 等 | `MCPService.convertToBaseTools` 产出的 `BaseTool` 匿名子类，仅覆写 `getInputSchema()`，走 `fromRawSchema` 分支转换 |
 
 ---
