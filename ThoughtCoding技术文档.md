@@ -192,7 +192,7 @@ AgentLoop.processInput(input)
     └── runNativeToolLoop()（原生 function calling 多轮循环）
     ↓
 LangChainService.streamingChat()
-    ├── 由 ContextManager.getContextForAI() 得到压缩后的历史
+    ├── 由 ContextManager.compactContext() 得到压缩后的历史
     ├── 系统提示（角色/规则/技能目录，不罗列工具——工具经 ToolSpecification 结构化下发）
     ├── reqBuilder.toolSpecifications(registry.getToolSpecifications())  # 每次请求现算
     ├── 调用模型（通过 LangChain4j）
@@ -343,7 +343,7 @@ private List<ChatMessage> prepareMessages(String input, List<ChatMessage> histor
     // 1. 系统提示（角色/规则/技能目录，由 ContextManager 构建，不罗列工具）
     messages.add(SystemMessage.from(contextManager.buildNativeSystemPrompt().text()));
     
-    // 2. 历史对话（经 ContextManager.getContextForAI() 四层压缩后控制长度）
+    // 2. 历史对话（经 ContextManager.compactContext() 四层压缩后控制长度）
     if (history != null && !history.isEmpty()) {
         messages.addAll(convertToLangChainHistory(history));
     }
@@ -357,7 +357,7 @@ private List<ChatMessage> prepareMessages(String input, List<ChatMessage> histor
 
 **③ 上下文优化策略（四层压缩管线，顺序严格）**
 
-`ContextManager.getContextForAI()` 在每次请求前对历史做压缩，入口深拷贝一次、各层只动副本，最后 `sanitizeToolPairs` 兜底工具配对：
+`ContextManager.compactContext()` 在每次请求前对历史做压缩，入口深拷贝一次、各层只动副本，最后 `sanitizeToolPairs` 兜底工具配对：
 
 1. **L3 落盘**：当轮那批工具结果总字节超过聚合预算（默认 `maxContextTokens/2`）时，仅把单条超过 `perResultPersistBytes`（默认 30KB）的大结果落盘到 `transcripts/persisted/`，正文换 `<persisted-output>` 标记 + 预览 + 磁盘路径（正常单次 read 不触发）
 2. **L1 裁中段**：消息数超过 `maxMessages`（默认 50）时，保留头部 `snipKeepHead`（3）+ 尾部 `snipKeepTail`（20），中段替换为一条 `[snipped N messages]`，切点带工具配对边界保护
@@ -1220,14 +1220,14 @@ Runtime.getRuntime().addShutdownHook(new Thread(() -> {
 **四层压缩管线**（详见 2.1 ③）：落盘大工具结果（L3）→ 裁中段（L1）→ 旧结果占位（L2）→ 超阈值则 LLM 摘要（L4），最后 `sanitizeToolPairs` 兜底工具配对。不再是简单的"滑动窗口 + 截断"。
 
 ```java
-public List<ChatMessage> getContextForAI(List<ChatMessage> fullHistory) {
+public List<ChatMessage> compactContext(List<ChatMessage> fullHistory) {
     // 入口深拷贝一次，后续各层只动副本
     List<ChatMessage> work = deepCopyAll(fullHistory);
     work = toolResultBudget(work);   // L3 落盘
     work = snipCompact(work);        // L1 裁中段
     work = microCompact(work);       // L2 旧结果占位
     if (estimateTotalTokens(work) > maxContextTokens) {
-        work = compactHistory(work, fullHistory); // L4 摘要
+        work = llmCompact(work, fullHistory); // L4 摘要
     }
     return sanitizeToolPairs(work);  // 兜底工具配对
 }

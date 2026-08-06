@@ -234,7 +234,7 @@ public class LangChainService implements AIService {
             return new SubagentTurn("(子Agent不可用：模型未初始化)", java.util.Collections.emptyList());
         }
 
-        // 组装消息：子Agent系统提示 + 子Agent自己的历史（不走 getContextForAI 压缩，生命周期短）
+        // 组装消息：子Agent系统提示 + 子Agent自己的历史（不走 compactContext 压缩，生命周期短）
         List<dev.langchain4j.data.message.ChatMessage> messages = new ArrayList<>();
         if (systemPrompt != null && !systemPrompt.isBlank()) {
             messages.add(dev.langchain4j.data.message.SystemMessage.from(systemPrompt));
@@ -322,7 +322,7 @@ public class LangChainService implements AIService {
 
         List<ChatMessage> managedHistory = history;
         if (contextManager != null && history != null && !history.isEmpty()) {
-            managedHistory = contextManager.getContextForAI(history);
+            managedHistory = contextManager.compactContext(history);
         }
 
         // 本轮易变的 <system-reminder>：召回记忆 + 未完成任务摘要（可为 null）

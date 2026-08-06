@@ -31,7 +31,7 @@ import java.util.List;
  *   <li><b>L3 toolResultBudget</b>：单条巨型工具结果落盘，上下文只留标记+预览（<b>必须最先</b>，趁全文还在）。</li>
  *   <li><b>L1 snipCompact</b>：消息条数超限时裁掉中段，保留头尾（带工具配对边界保护）。</li>
  *   <li><b>L2 microCompact</b>：仅最近 N 条工具结果保留全文，更旧的换一行占位。</li>
- *   <li><b>L4 compactHistory</b>：前三层跑完仍超 token 阈值时，落盘完整对话并用 LLM 摘要替换旧历史。</li>
+ *   <li><b>L4 llmCompact</b>：前三层跑完仍超 token 阈值时，落盘完整对话并用 LLM 摘要替换旧历史。</li>
  * </ol>
  * 最后统一经 {@link #sanitizeToolPairs} 兜底工具调用/结果配对，保证不触发模型 400。
  *
@@ -130,7 +130,7 @@ public class ContextManager {
     }
 
     /**
-     * 获取适合发送给 AI 的上下文——四层压缩管线。
+     * 压缩对话历史：四层压缩管线，返回可直接发给 AI 的缩减版副本。
      *
      * <p>顺序严格不可换：L3(落盘) → L1(裁中段) → L2(旧结果占位) → L4(超阈值则摘要) → 配对兜底。
      * 入口统一深拷贝一次，后续各层只动副本，绝不修改传入的 {@code fullHistory}。
@@ -138,7 +138,7 @@ public class ContextManager {
      * @param fullHistory 完整的对话历史（只读，不会被修改）
      * @return 经过处理的历史（不超过限制、工具配对一致）
      */
-    public List<ChatMessage> getContextForAI(List<ChatMessage> fullHistory) {
+    public List<ChatMessage> compactContext(List<ChatMessage> fullHistory) {
         if (fullHistory == null || fullHistory.isEmpty()) {
             return new ArrayList<>();
         }
@@ -151,7 +151,7 @@ public class ContextManager {
         work = microCompact(work);       // L2：最近 N 条全文，更旧的占位（跳过 L3 已落盘标记）
 
         if (estimateTotalTokens(work) > maxContextTokens) {
-            work = compactHistory(work, fullHistory); // L4：LLM 摘要，返回新列表，只读 fullHistory
+            work = llmCompact(work, fullHistory); // L4：LLM 摘要，返回新列表，只读 fullHistory
         }
 
         // 🔥 保证发给模型的历史工具调用/结果配对一致（防止各层裁剪导致孤立 id → 模型 400）
@@ -415,7 +415,7 @@ public class ContextManager {
      * 构造并返回<b>全新列表</b>（[摘要消息] + 尾部）。绝不修改 {@code fullHistory}（只读它取 sessionId、写 transcript）。
      * 模型不可用或摘要失败时放弃 L4，原样返回 {@code work}。
      */
-    private List<ChatMessage> compactHistory(List<ChatMessage> work, List<ChatMessage> fullHistory) {
+    private List<ChatMessage> llmCompact(List<ChatMessage> work, List<ChatMessage> fullHistory) {
         if (ChatModel == null) {
             return work; // 模型不可用 → 放弃 L4
         }
