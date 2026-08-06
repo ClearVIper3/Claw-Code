@@ -312,6 +312,7 @@ public class LangChainService implements AIService {
             String input, List<ChatMessage> history) {
         List<dev.langchain4j.data.message.ChatMessage> messages = new ArrayList<>();
 
+        // system 前缀（项目上下文），保持不变
         if (contextManager != null) {
             ChatMessage projectContext = contextManager.buildProjectContextMessage();
             if (projectContext != null) {
@@ -324,27 +325,48 @@ public class LangChainService implements AIService {
             managedHistory = contextManager.getContextForAI(history);
         }
 
-        if (managedHistory != null && !managedHistory.isEmpty()) {
-            messages.addAll(convertToLangChainHistory(managedHistory));
+        // 本轮易变的 <system-reminder>：召回记忆 + 未完成任务摘要（可为 null）
+        String recallReminder = (contextManager != null) ? contextManager.buildRecallReminder() : null;
+        String taskReminder = (contextManager != null) ? contextManager.buildTaskReminder() : null;
+
+        // 定位「当前轮用户提问」：managedHistory 中最后一条 role=user 的消息。
+        // 循环中它之后只有 assistant/tool；L1 [snipped] 占位与 L4 [Conversation compressed.]
+        // 虽也是 role=user 但都在更早位置，故「最后一条 user」恒为当前提问。
+        int lastUserIdx = -1;
+        if (managedHistory != null) {
+            for (int i = managedHistory.size() - 1; i >= 0; i--) {
+                if (managedHistory.get(i).isUserMessage()) {
+                    lastUserIdx = i;
+                    break;
+                }
+            }
         }
 
-        // 本轮召回的相关记忆（每轮易变）：包成 <system-reminder> 注入到消息列表<b>尾部</b>（贴当前轮），
-        // 而非塞进 system 前缀——保护「system + 历史」前缀缓存不被每轮召回冲掉（仿 Claude Code 把易变上下文贴当前用户轮）。
-        // 尾部是唯一能让整段历史保持可复用前缀的位置；每请求即时注入、不写入持久 history，故不污染后续轮。
-        if (contextManager != null) {
-            String recallReminder = contextManager.buildRecallReminder();
+        if (lastUserIdx < 0) {
+            // 兜底：历史里没有任何 user 消息 → 退化为原「尾部追加」行为，保持与旧逻辑等价
+            if (managedHistory != null && !managedHistory.isEmpty()) {
+                messages.addAll(convertToLangChainHistory(managedHistory));
+            }
             if (recallReminder != null) {
                 messages.add(dev.langchain4j.data.message.UserMessage.from(recallReminder));
             }
-        }
-
-        // 未完成任务摘要（每轮易变，与记忆召回同侧贴尾部，理由同上）：任务清单进 system 前缀会冲掉前缀缓存
-        if (contextManager != null) {
-            String taskReminder = contextManager.buildTaskReminder();
             if (taskReminder != null) {
                 messages.add(dev.langchain4j.data.message.UserMessage.from(taskReminder));
             }
+            return messages;
         }
+
+        // 利用 Transformer 近因偏置：把当前用户提问放到消息列表<b>最末尾</b>。
+        // 易变的召回/任务 <system-reminder> 紧贴在当前提问之前注入（仍在尾段、不进 system 前缀，
+        // 前缀缓存不受冲击）；切点恒为 user 消息，绝不会拆散 assistant(toolCalls)↔tool 配对。
+        messages.addAll(convertToLangChainHistory(managedHistory.subList(0, lastUserIdx)));
+        if (recallReminder != null) {
+            messages.add(dev.langchain4j.data.message.UserMessage.from(recallReminder));
+        }
+        if (taskReminder != null) {
+            messages.add(dev.langchain4j.data.message.UserMessage.from(taskReminder));
+        }
+        messages.addAll(convertToLangChainHistory(managedHistory.subList(lastUserIdx, managedHistory.size())));
 
         // 纯从 history 渲染：用户消息已由 AgentLoop 加入 history；input=null 时供 agentic 循环复用
         return messages;
