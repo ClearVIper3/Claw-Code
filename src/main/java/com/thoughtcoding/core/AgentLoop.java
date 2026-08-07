@@ -1,6 +1,7 @@
 package com.thoughtcoding.core;
 
 import com.thoughtcoding.config.AppConfig;
+import com.thoughtcoding.core.background.BackgroundTaskManager;
 import com.thoughtcoding.hook.HookContext;
 import com.thoughtcoding.hook.HookRegistry;
 import com.thoughtcoding.hook.HookResult;
@@ -27,6 +28,10 @@ public class AgentLoop {
     /** 只读工具：结果回喂模型即可，不在用户端 dump 内容（避免刷屏）。 */
     private static final Set<String> QUIET_OUTPUT_TOOLS = Set.of("read", "glob", "skill", "task_get");
 
+    /** 后台工具（bash）的占位 tool_result 文案：配对保持 + 提示模型结果稍后以通知到达。 */
+    private static final String BG_PLACEHOLDER =
+            "任务已在后台启动，完成后会通过 <task_notification> 返回结果。";
+
     private final ThoughtCodingContext context;
     private final List<ChatMessage> history;
     private final String sessionId;
@@ -37,6 +42,9 @@ public class AgentLoop {
 
     // 缓存本轮模型请求的工具调用（原生路径一轮可能有多个）
     private final List<ToolCall> pendingToolCalls = new ArrayList<>();
+
+    // 🔥 后台任务管理器：耗时工具卸载到守护线程池，结果以 <task_notification> 注入
+    private final BackgroundTaskManager backgroundTasks = new BackgroundTaskManager();
 
     public AgentLoop(ThoughtCodingContext context, String sessionId, String modelName) {
         this.context = context;
@@ -74,6 +82,10 @@ public class AgentLoop {
 
         try {
             pendingToolCalls.clear();
+
+            // 🔥 上一回合结束后才完成的后台任务，在本轮用户输入之前注入通知——
+            // 放在新用户消息之前，确保当前 query 仍是 prepareMessages 的尾部锚点。
+            drainCompletedBackgroundTasks();
 
             // ── Hook: UserPromptSubmit（进入 LLM 前）—— BLOCK 则跳过本轮 ──
             HookResult promptResult = hookRegistry.fire(
@@ -162,6 +174,19 @@ public class AgentLoop {
                     continue;
                 }
 
+                // 🔥 后台任务：模型显式请求 run_in_background=true 时卸载到守护线程。
+                // 权限/确认已在前台完成；占位 tool_result 立即补齐保持 call/result 配对，
+                // 真实结果稍后以 <task_notification> 注入（见 drainCompletedBackgroundTasks）。
+                if (shouldRunBackground(call)) {
+                    String label = extractCommand(call);
+                    String bgId = backgroundTasks.dispatch(call, toolDispatcher, label);
+                    context.getUi().displayInfo("[background] 已派发 " + bgId
+                            + (label != null ? " : " + label : ""));
+                    history.add(ChatMessage.toolResult(call.getProviderCallId(), call.getToolName(),
+                            BG_PLACEHOLDER + " (task_id=" + bgId + ")"));
+                    continue;
+                }
+
                 // 执行并把结果按 id 配对写回 history
                 ToolResult result = toolDispatcher.dispatch(call);
 
@@ -178,6 +203,10 @@ public class AgentLoop {
                 history.add(ChatMessage.toolResult(call.getProviderCallId(), call.getToolName(), resultText));
             }
 
+            // 🔥 收拢本批执行期间完成的后台任务：注入 <task_notification> 供下一轮 LLM 感知。
+            // 放在 auto/maxIter 检查之前：auto 时 while(true) 会立刻再发一轮把通知喂给模型。
+            drainCompletedBackgroundTasks();
+
             if (stop) {
                 break;      // 用户 DISCARD → 停止循环，交回用户
             }
@@ -191,6 +220,58 @@ public class AgentLoop {
                 break;
             }
         }
+
+        // 🔥 循环自然终止但仍有后台任务在跑：提示结果将在下一轮出现
+        if (backgroundTasks.hasRunning()) {
+            context.getUi().displayInfo("ℹ️  " + backgroundTasks.runningCount()
+                    + " 个后台任务仍在运行，结果将在下一轮出现。");
+        }
+    }
+
+    /** 是否应把该工具调用卸载到后台执行：仅 bash 且显式 run_in_background=true。 */
+    private boolean shouldRunBackground(ToolCall call) {
+        if (!"bash".equals(call.getToolName()) || call.getParameters() == null) {
+            return false;
+        }
+        Object v = call.getParameters().get("run_in_background");
+        return v instanceof Boolean ? (Boolean) v
+                : v != null && "true".equalsIgnoreCase(v.toString());
+    }
+
+    /**
+     * 收拢已完成的后台任务：触发 PostToolUse hook、打印完成提示，
+     * 并以 role=user 的 <task_notification> 消息注入 history（持久、供下一轮 LLM 感知）。
+     * 幂等：drainCompleted 取走即从注册表移除，同任务不会重复上报。
+     */
+    private void drainCompletedBackgroundTasks() {
+        for (BackgroundTaskManager.BgTask t : backgroundTasks.drainCompleted()) {
+            // PostToolUse 在结果就绪的主线程触发（派发时结果未就绪）
+            hookRegistry.fire(HookContext.forPostTool(context, history, t.call, t.result));
+            boolean ok = t.result != null && t.result.isSuccess();
+            context.getUi().displayInfo("[background done] " + t.id + (ok ? " ✅" : " ❌"));
+            history.add(new ChatMessage("user", buildTaskNotification(t)));
+        }
+    }
+
+    /** 仿 s13：把后台任务结果拼成 <task_notification> 消息体。 */
+    private String buildTaskNotification(BackgroundTaskManager.BgTask t) {
+        String status = (t.result != null && t.result.isSuccess()) ? "completed" : "failed";
+        String body = (t.result != null && t.result.isSuccess())
+                ? t.result.getOutput() : (t.result != null ? t.result.getError() : null);
+        if (body == null) {
+            body = "";
+        }
+        if (body.length() > 4000) {
+            body = body.substring(0, 4000) + "\n...(truncated)";
+        }
+        return "<task_notification>\n<task_id>" + t.id + "</task_id>\n<status>" + status
+                + "</status>\n<command>" + (t.label == null ? "" : t.label) + "</command>\n<summary>"
+                + body + "</summary>\n</task_notification>";
+    }
+
+    /** 关闭后台任务管理器（CLI 退出时调用；守护线程即便漏网也不阻塞 JVM 退出）。 */
+    public void shutdownBackground() {
+        backgroundTasks.shutdown();
     }
 
     private String describeTool(ToolCall call) {

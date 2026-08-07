@@ -33,6 +33,10 @@ public class BashTool extends BaseTool {
         return JsonObjectSchema.builder()
                 .addStringProperty("command", "要执行的 shell 命令")
                 .addIntegerProperty("timeout", "超时秒数（可选）")
+                .addBooleanProperty("run_in_background",
+                        "设为 true 时在后台异步执行，立即返回占位结果；"
+                                + "命令完成后通过 <task_notification> 通知回报结果。"
+                                + "用于构建/测试/长轮询等耗时命令。")
                 .required("command")
                 .additionalProperties(false)
                 .build();

@@ -178,6 +178,9 @@ public class ThoughtCodingCommand implements Callable<Integer> {
                     // 处理AI响应，协调整个处理流程
                     currentAgentLoop.processInput(prompt);
 
+                    // 单次模式结束：关闭后台任务管理器
+                    currentAgentLoop.shutdownBackground();
+
                     return 0;
                 } catch (Exception e) {
                     context.getUi().displayError("Failed to process prompt: " + e.getMessage());
@@ -265,6 +268,8 @@ public class ThoughtCodingCommand implements Callable<Integer> {
 
                 // 退出命令
                 if (trimmedInput.equalsIgnoreCase("exit") || trimmedInput.equalsIgnoreCase("quit")) {
+                    // 关闭后台任务管理器（中断在跑任务）
+                    agentLoop.shutdownBackground();
                     // 设置UI回调
                     ui.displayInfo("Goodbye!");
                     break;
