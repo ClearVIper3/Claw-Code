@@ -228,7 +228,8 @@ public class AgentLoop {
         }
     }
 
-    /** 是否应把该工具调用卸载到后台执行：仅 bash 且显式 run_in_background=true。 */
+    /** 是否应把该工具调用卸载到后台执行：仅 bash 且显式 run_in_background=true。
+     *  TODO: subAgent 后台化（现同步执行）—— 接入后台队列前需先解决 worker 线程与主循环共享 line reader/终端的并发问题。 */
     private boolean shouldRunBackground(ToolCall call) {
         if (!"bash".equals(call.getToolName()) || call.getParameters() == null) {
             return false;
