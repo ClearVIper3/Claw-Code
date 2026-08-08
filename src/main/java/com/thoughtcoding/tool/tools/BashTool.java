@@ -23,7 +23,7 @@ public class BashTool extends BaseTool {
             System.getProperty("os.name").toLowerCase().contains("win") ? "PowerShell" : "bash";
 
     public BashTool(AppConfig appConfig) {
-        super("bash", "执行任意 " + SHELL + " 命令，返回合并的 stdout/stderr。需要搜索文件内容时也用它（如 grep/rg）。参数：command（必填）、timeout（可选，秒）。");
+        super("bash", "执行任意 " + SHELL + " 命令，返回合并的 stdout/stderr。需要搜索文件内容时也用它（如 grep/rg）。参数：command（必填）、timeout（可选，秒）、run_in_background（可选，布尔）。⚠️ 后台任务（run_in_background=true）的命令往往耗时很长，务必显式传足够大的 timeout（建议 600 秒以上），否则会因默认超时被提前终止。");
         Integer t = appConfig.getTools().getBash().getTimeoutSeconds();
         this.defaultTimeoutSeconds = (t == null || t <= 0) ? 60 : t;
     }
