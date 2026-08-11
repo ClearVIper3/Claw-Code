@@ -7,6 +7,11 @@ import com.thoughtcoding.mcp.MCPService;
 import com.thoughtcoding.mcp.MCPToolManager;
 import com.thoughtcoding.memory.MemoryService;
 import com.thoughtcoding.memory.MemoryStore;
+import com.thoughtcoding.cron.CronScheduler;
+import com.thoughtcoding.cron.CronStore;
+import com.thoughtcoding.cron.tools.CronCancelTool;
+import com.thoughtcoding.cron.tools.CronListTool;
+import com.thoughtcoding.cron.tools.CronScheduleTool;
 import com.thoughtcoding.service.AIService;
 import com.thoughtcoding.service.ContextManager;
 import com.thoughtcoding.service.LangChainService;
@@ -62,6 +67,9 @@ public class ThoughtCodingContext {
     // 🔥 新增记忆系统（LLM 驱动：召回/储存/整理；非工具）
     private final MemoryService memoryService;
 
+    // 🔥 新增定时任务(cron)调度器（可为 null = 定时任务系统关闭）
+    private final CronScheduler cronScheduler;
+
     private ThoughtCodingContext(Builder builder) {
         this.appConfig = builder.appConfig;
         this.mcpConfig = builder.mcpConfig;
@@ -74,6 +82,7 @@ public class ThoughtCodingContext {
         this.mcpToolManager = builder.mcpToolManager;
         this.contextManager = builder.contextManager;
         this.memoryService = builder.memoryService;
+        this.cronScheduler = builder.cronScheduler;
     }
 
     public static ThoughtCodingContext initialize() {
@@ -145,6 +154,30 @@ public class ThoughtCodingContext {
             }
         }
 
+        // ── 定时任务(cron)系统（确定性调度 + 落盘 .scheduled_tasks.json，无 LLM 层）：
+        //    cron.enabled=false 或初始化失败则整体为 null。轮询线程在此启动（生产者），
+        //    消费者守护线程在 REPL 交互模式启动（见 ThoughtCodingCommand）。
+        AppConfig.CronConfig cronCfg = appConfig.getCron();
+        CronStore cronStore = null;
+        CronScheduler cronScheduler = null;
+        if (cronCfg != null && cronCfg.isEnabled()) {
+            try {
+                // 必须用绝对路径：FileUtils.writeFile 会对 getParent() 建目录，裸文件名会 NPE
+                cronStore = CronStore.load(
+                        java.nio.file.Paths.get(System.getProperty("user.dir"), ".scheduled_tasks.json"));
+                cronScheduler = new CronScheduler(cronStore);
+                cronScheduler.start();
+                toolRegistry.register(new CronScheduleTool(cronStore));
+                toolRegistry.register(new CronListTool(cronStore));
+                toolRegistry.register(new CronCancelTool(cronStore));
+            } catch (Exception e) {
+                System.err.println("❌ 定时任务系统初始化失败: " + e.getMessage());
+                e.printStackTrace();
+                cronStore = null;
+                cronScheduler = null;
+            }
+        }
+
         // 🔥 初始化 MCP 服务（如果启用）
         if (mcpConfig != null && mcpConfig.isEnabled()) {
             initializeMCPTools(mcpConfig, mcpService, toolRegistry);
@@ -188,6 +221,7 @@ public class ThoughtCodingContext {
                 .mcpToolManager(mcpToolManager)
                 .contextManager(contextManager)  // 🔥 添加 contextManager
                 .memoryService(memoryService)   // 🔥 添加 memoryService（可为 null = 记忆关闭）
+                .cronScheduler(cronScheduler)   // 🔥 添加 cronScheduler（可为 null = 定时任务关闭）
                 .build();
 
         // 🔥 子Agent 工具（subAgent）：需持有已构建好的 context 引用来派生隔离子循环，故在 build 之后注册。
@@ -351,6 +385,9 @@ public class ThoughtCodingContext {
 
     // 🔥 新增 memoryService Getter（可为 null = 记忆功能关闭）
     public MemoryService getMemoryService() { return memoryService; }
+
+    // 🔥 新增 cronScheduler Getter（可为 null = 定时任务系统关闭）
+    public CronScheduler getCronScheduler() { return cronScheduler; }
     public ThoughtCodingUI getUi() { return ui; }
     public PerformanceMonitor getPerformanceMonitor() { return performanceMonitor; }
 
@@ -380,6 +417,8 @@ public class ThoughtCodingContext {
         private ContextManager contextManager;
         // 🔥 新增记忆系统字段
         private MemoryService memoryService;
+        // 🔥 新增定时任务(cron)调度器字段
+        private CronScheduler cronScheduler;
 
         public Builder appConfig(AppConfig appConfig) {
             this.appConfig = appConfig;
@@ -436,6 +475,12 @@ public class ThoughtCodingContext {
         // 🔥 新增 memoryService Builder 方法
         public Builder memoryService(MemoryService memoryService) {
             this.memoryService = memoryService;
+            return this;
+        }
+
+        // 🔥 新增 cronScheduler Builder 方法
+        public Builder cronScheduler(CronScheduler cronScheduler) {
+            this.cronScheduler = cronScheduler;
             return this;
         }
 

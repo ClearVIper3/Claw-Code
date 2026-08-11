@@ -42,6 +42,13 @@ memory:
 tasks:
   enabled: true                 # 总开关：装配任务系统（加载 .tasks/ + 注册 6 个 task 工具 + 注入未完成摘要）
 
+# —— 定时任务系统（Cron，确定性调度，非工具开关）——
+# 存储于 <工作目录>/.scheduled_tasks.json（仅 durable 任务落盘），跨会话恢复。
+# 3 个工具：cron_schedule / cron_list / cron_cancel；到点后即使停在 thought> 也会自动跑一轮 Agent
+# （需交互模式；-p 单次模式只落盘不自动触发）。
+cron:
+  enabled: true                 # 总开关：装配定时任务系统（加载 .scheduled_tasks.json + 注册 cron 工具 + 到点自动唤醒执行）
+
 tools:
   bash:
     enabled: true
