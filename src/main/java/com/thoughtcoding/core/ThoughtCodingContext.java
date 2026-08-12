@@ -176,7 +176,7 @@ public class ThoughtCodingContext {
                 cronScheduler.start();
                 toolRegistry.register(new CronScheduleTool(cronStore));
                 toolRegistry.register(new CronListTool(cronStore));
-                toolRegistry.register(new CronCancelTool(cronStore));
+                toolRegistry.register(new CronCancelTool(cronStore, cronScheduler));
             } catch (Exception e) {
                 System.err.println("❌ 定时任务系统初始化失败: " + e.getMessage());
                 e.printStackTrace();

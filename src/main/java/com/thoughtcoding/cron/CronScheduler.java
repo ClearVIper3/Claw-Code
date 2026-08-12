@@ -76,6 +76,17 @@ public class CronScheduler {
         return out;
     }
 
+    /** 取消一个任务时，连带清掉它已入队但尚未被消费的到点项 + 分钟去重标记，
+     *  避免「已取消却仍触发」。仅供显式 cancel 调用——不可放进 pollLoop 的 one-shot 移除路径
+     *  （那会在入队瞬间删 store，再清队列会误杀合法的一次性触发）。 */
+    public void purgeFired(String jobId) {
+        if (jobId == null) {
+            return;
+        }
+        fired.removeIf(job -> jobId.equals(job.getId()));   // ConcurrentLinkedQueue.removeIf 并发安全
+        lastFired.remove(jobId);                              // 顺手清去重标记（陈旧无害，清了更干净）
+    }
+
     // ── 轮询线程主体 ──
 
     private void pollLoop() {
