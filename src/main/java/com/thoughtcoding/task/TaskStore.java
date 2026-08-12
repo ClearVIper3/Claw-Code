@@ -163,6 +163,39 @@ public final class TaskStore {
         return tasks.remove(id) != null;
     }
 
+    /**
+     * 是否整图已完成：非空且全部任务 status 都是 completed。
+     * 空库返回 false（避免对空图误触发清空）。
+     */
+    public boolean allCompleted() {
+        if (tasks.isEmpty()) {
+            return false;
+        }
+        for (Task t : tasks.values()) {
+            if (!"completed".equals(t.getStatus())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * 清空任务图：删掉 .tasks/ 下所有常规文件（含 .seq，计数一并复位）并清空内存。
+     * 仅在 {@link #allCompleted()} 为真时调用——此时没有任何任务还在等依赖，删文件不会
+     * 让下游 {@link #canStart} 因"依赖缺失"而永久阻塞。任一删除失败静默忽略（内存已清即可用），
+     * 对齐本类"文件操作失败都降级、不抛"的容错风格。
+     */
+    public void clearAll() {
+        try (var stream = Files.list(dir)) {
+            for (Path file : (Iterable<Path>) stream.filter(Files::isRegularFile).toList()) {
+                Files.deleteIfExists(file);
+            }
+        } catch (Exception ignored) {
+            // 目录列举/删除失败不影响内存清空（下次 load 会重新读到残留文件，属可接受降级）
+        }
+        tasks.clear();
+    }
+
     // ── 生命周期守卫：claim / complete / canStart / unlockedBy ──
 
     /**

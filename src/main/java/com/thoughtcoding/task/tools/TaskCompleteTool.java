@@ -71,6 +71,11 @@ public class TaskCompleteTool extends BaseTool {
                 sb.append("解锁下游任务: ").append(names).append('\n');
             }
             sb.append(store.render());
+            // 整图完成后清空 .tasks/，为下一轮工作让路（须在 render 之后，先让用户看到全 ✓ 收尾态）
+            if (store.allCompleted()) {
+                store.clearAll();
+                sb.append("\n🧹 全部任务已完成，已清空任务图（.tasks/ 重置）。");
+            }
             return success(sb.toString(), System.currentTimeMillis() - startTime);
         } catch (Exception e) {
             return error("task_complete 参数解析失败: " + e.getMessage(), System.currentTimeMillis() - startTime);

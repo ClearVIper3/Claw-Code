@@ -78,7 +78,13 @@ public class TaskUpdateTool extends BaseTool {
             if (store.update(id, subject, description, owner, addBlockedBy, addBlocks, status) == null) {
                 return error("任务 #" + id + " 不存在（或已删除）", System.currentTimeMillis() - startTime);
             }
-            return success("已更新 #" + id + "\n" + store.render(), System.currentTimeMillis() - startTime);
+            String rendered = store.render();
+            // 逃生通道（status=completed）也可能完成最后一个任务：整图完成后同样清空 .tasks/
+            if (store.allCompleted()) {
+                store.clearAll();
+                rendered += "\n🧹 全部任务已完成，已清空任务图（.tasks/ 重置）。";
+            }
+            return success("已更新 #" + id + "\n" + rendered, System.currentTimeMillis() - startTime);
         } catch (Exception e) {
             return error("task_update 参数解析失败: " + e.getMessage(), System.currentTimeMillis() - startTime);
         }
