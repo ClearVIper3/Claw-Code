@@ -35,6 +35,9 @@ public class AppConfig {
     @JsonProperty("tasks")
     private TaskConfig tasks = new TaskConfig(); // 任务系统配置
 
+    @JsonProperty("cron")
+    private CronConfig cron = new CronConfig(); // 定时任务系统配置
+
 
     // Getters and Setters
     public Map<String, ModelConfig> getModels() {
@@ -95,6 +98,17 @@ public class AppConfig {
 
     public void setTasks(TaskConfig tasks) {
         this.tasks = tasks;
+    }
+
+    public CronConfig getCron() {
+        if (cron == null) {
+            cron = new CronConfig();
+        }
+        return cron;
+    }
+
+    public void setCron(CronConfig cron) {
+        this.cron = cron;
     }
 
 
@@ -494,6 +508,24 @@ public class AppConfig {
     public static class TaskConfig {
         @JsonProperty("enabled")
         private boolean enabled = true; // 总开关：装配任务系统（加载 .tasks/、注册 6 个 task 工具、注入未完成摘要）
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+    }
+
+    /**
+     * 定时任务(cron)系统配置 —— 调度器 + 三个 cron 工具（cron_schedule/list/cancel）的总开关。
+     * 非 LLM 驱动、不是工具开关——工具在 ThoughtCodingContext 按本配置条件注册（对齐 task/memory 的装配方式）。
+     */
+    @Data
+    public static class CronConfig {
+        @JsonProperty("enabled")
+        private boolean enabled = true; // 总开关：装配定时任务系统（加载 .scheduled_tasks.json + 注册 cron 工具 + 到点自动唤醒）
 
         public boolean isEnabled() {
             return enabled;

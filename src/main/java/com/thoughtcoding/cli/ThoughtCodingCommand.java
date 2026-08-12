@@ -8,10 +8,12 @@ import com.thoughtcoding.service.SessionService;
 import com.thoughtcoding.ui.ThoughtCodingUI;
 import com.thoughtcoding.config.MCPConfig;
 import com.thoughtcoding.config.MCPServerConfig;
+import com.thoughtcoding.cron.CronJob;
 import picocli.CommandLine;
 
 import java.util.*;
 import java.util.concurrent.Callable;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
 
 /**
@@ -30,6 +32,11 @@ import java.util.stream.Collectors;
 public class ThoughtCodingCommand implements Callable<Integer> {
 
     private final ThoughtCodingContext context;
+
+    // 🔥 定时任务(cron)自主唤醒：所有 processInput 站点共用的一把锁，
+    // 保证"用户手动输入的回合"与"定时到点自动回合"绝不同时跑（AgentLoop 的
+    // history/pendingToolCalls 与 LangChainService 的全局 handler 均非并发安全）。
+    private final ReentrantLock agentLock = new ReentrantLock();
 
     // 添加会话管理字段
     private AgentLoop currentAgentLoop;
@@ -176,7 +183,12 @@ public class ThoughtCodingCommand implements Callable<Integer> {
                     ui.displayUserMessage(userMessage);
 
                     // 处理AI响应，协调整个处理流程
-                    currentAgentLoop.processInput(prompt);
+                    agentLock.lock();
+                    try {
+                        currentAgentLoop.processInput(prompt);
+                    } finally {
+                        agentLock.unlock();
+                    }
 
                     // 单次模式结束：关闭后台任务管理器
                     currentAgentLoop.shutdownBackground();
@@ -252,6 +264,47 @@ public class ThoughtCodingCommand implements Callable<Integer> {
     private Integer startInteractiveMode(AgentLoop agentLoop, ThoughtCodingUI ui) {
         ui.displayInfo("Entering interactive mode. Type 'exit' to quit, 'help' for commands.");
 
+        // 🔥 定时任务(cron)消费者：独立守护线程，到点任务由 cronScheduler 入队、此线程持锁自动执行。
+        // 主线程在 readLine 阻塞时【不】持锁 → tryLock 成功 → 自动回合照常跑；
+        // 主线程正在跑一轮时持锁 → tryLock 失败 → 跳过本跳、下跳再试，绝不与用户回合并发。
+        var cronScheduler = context.getCronScheduler();
+        Thread cronConsumer = null;
+        if (cronScheduler != null) {
+            cronConsumer = new Thread(() -> {
+                while (!Thread.currentThread().isInterrupted()) {
+                    try {
+                        Thread.sleep(200);
+                    } catch (InterruptedException e) {
+                        return; // 正常关停
+                    }
+                    if (!agentLock.tryLock()) {
+                        continue; // 用户回合正在跑（或即将开始）→ 跳过
+                    }
+                    try {
+                        List<CronJob> jobs = cronScheduler.drainFired();
+                        if (!jobs.isEmpty()) {
+                            // 定时任务本就无人值守：drain 期间自动放行工具，避免定时轮
+                            // 在 UI LineReader 上弹确认、与主线程的输入 LineReader 抢读同一终端。
+                            boolean prev = agentLoop.isAutoApproveMode();
+                            agentLoop.setAutoApprove(true);
+                            try {
+                                for (CronJob job : jobs) {
+                                    ui.displayInfo("[cron fired] " + job.getPrompt());
+                                    agentLoop.processInput("[Scheduled] " + job.getPrompt());
+                                }
+                            } finally {
+                                agentLoop.setAutoApprove(prev);
+                            }
+                        }
+                    } finally {
+                        agentLock.unlock();
+                    }
+                }
+            }, "cron-queue-consumer");
+            cronConsumer.setDaemon(true);
+            cronConsumer.start();
+        }
+
         while (true) {
             try {
                 // 🔥 在读取输入前输出一个换行，确保 thought> 提示符在新的一行
@@ -268,6 +321,13 @@ public class ThoughtCodingCommand implements Callable<Integer> {
 
                 // 退出命令
                 if (trimmedInput.equalsIgnoreCase("exit") || trimmedInput.equalsIgnoreCase("quit")) {
+                    // 🔥 关停定时任务消费者 + 调度器（守护线程即便漏网也不阻塞 JVM 退出）
+                    if (cronConsumer != null) {
+                        cronConsumer.interrupt();
+                    }
+                    if (cronScheduler != null) {
+                        cronScheduler.shutdown();
+                    }
                     // 关闭后台任务管理器（中断在跑任务）
                     agentLoop.shutdownBackground();
                     // 设置UI回调
@@ -319,7 +379,12 @@ public class ThoughtCodingCommand implements Callable<Integer> {
                 }
 
                 // 处理普通对话
-                agentLoop.processInput(trimmedInput);
+                agentLock.lock();
+                try {
+                    agentLoop.processInput(trimmedInput);
+                } finally {
+                    agentLock.unlock();
+                }
 
             } catch (Exception e) {
                 ui.displayError("Error: " + e.getMessage());
@@ -543,7 +608,12 @@ public class ThoughtCodingCommand implements Callable<Integer> {
         ThoughtCodingUI ui = context.getUi();
         try {
             ui.displayUserMessage(new ChatMessage("user", prompt));
-            agentLoop.processInput(prompt);
+            agentLock.lock();
+            try {
+                agentLoop.processInput(prompt);
+            } finally {
+                agentLock.unlock();
+            }
         } catch (Exception e) {
             ui.displayError("Failed to process prompt: " + e.getMessage());
         }
