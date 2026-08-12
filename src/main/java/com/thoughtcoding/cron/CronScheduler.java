@@ -65,6 +65,7 @@ public class CronScheduler {
         return !fired.isEmpty();
     }
 
+    //TODO: 优先CLI前端表现
     /** 取走并清空到点任务（幂等：取出即从队列移除）。 */
     public List<CronJob> drainFired() {
         List<CronJob> out = new ArrayList<>();
