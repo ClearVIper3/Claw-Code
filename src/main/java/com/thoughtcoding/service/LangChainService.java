@@ -220,21 +220,23 @@ public class LangChainService implements AIService {
     }
 
     /**
-     * 🔥 子Agent专用：一次「隔离」的模型往返。
+     * 🔥 隔离原语：一次「隔离」的模型往返（teammate 专用）。
      *
      * <p>与 {@link #streamingChat} 的关键区别 —— <b>完全不触碰</b>本实例的共享可变状态
      * （{@code messageHandler}/{@code toolCallHandler}/{@code isGenerating}/{@code shouldStop}），
-     * 也<b>不改写</b>传入的 history，且从工具规格里过滤掉 {@code subAgent} 以禁止子Agent递归。
-     * 用本地 future 阻塞等待，任何超时/错误都兜底为一个「无工具调用」的结论文本，永不抛出。
+     * 也<b>不改写</b>传入的 history，且从工具规格里过滤掉 {@code excludedToolNames} 中列出的工具
+     * 以禁止队友再派生队友/子Agent。用本地 future 阻塞等待，任何超时/错误都兜底为一个
+     * 「无工具调用」的结论文本，永不抛出。
      */
     @Override
-    public SubagentTurn chatOnceForSubagent(String systemPrompt, List<ChatMessage> history,
-                                            java.util.function.Consumer<String> tokenSink) {
+    public SubagentTurn chatOnceIsolated(String systemPrompt, List<ChatMessage> history,
+                                         java.util.function.Consumer<String> tokenSink,
+                                         java.util.Set<String> excludedToolNames) {
         if (streamingChatModel == null) {
-            return new SubagentTurn("(子Agent不可用：模型未初始化)", java.util.Collections.emptyList());
+            return new SubagentTurn("(队友不可用：模型未初始化)", java.util.Collections.emptyList());
         }
 
-        // 组装消息：子Agent系统提示 + 子Agent自己的历史（不走 compactContext 压缩，生命周期短）
+        // 组装消息：系统提示 + 队友自己的历史（不走 compactContext 压缩，生命周期短）
         List<dev.langchain4j.data.message.ChatMessage> messages = new ArrayList<>();
         if (systemPrompt != null && !systemPrompt.isBlank()) {
             messages.add(dev.langchain4j.data.message.SystemMessage.from(systemPrompt));
@@ -248,10 +250,10 @@ public class LangChainService implements AIService {
         if (toolRegistry != null) {
             List<dev.langchain4j.agent.tool.ToolSpecification> specs = toolRegistry.getToolSpecifications();
             if (specs != null && !specs.isEmpty()) {
-                // 过滤掉 subAgent 自身：子Agent看不到它，就无从递归派生（防递归的唯一手段）
+                // 过滤掉 excludedToolNames 里的工具：队友看不到它们，就无法再派生（防递归的唯一手段）
                 List<dev.langchain4j.agent.tool.ToolSpecification> filtered = new ArrayList<>();
                 for (dev.langchain4j.agent.tool.ToolSpecification s : specs) {
-                    if (!"subAgent".equals(s.name())) {
+                    if (excludedToolNames == null || !excludedToolNames.contains(s.name())) {
                         filtered.add(s);
                     }
                 }
@@ -270,7 +272,7 @@ public class LangChainService implements AIService {
                     try {
                         tokenSink.accept(token);
                     } catch (Exception ignored) {
-                        // 显示回调异常不影响子Agent推进
+                        // 显示回调异常不影响队友推进
                     }
                 }
             }
@@ -295,15 +297,15 @@ public class LangChainService implements AIService {
             }
         });
 
-        // 异常全包：绝不抛出（ToolDispatcher/SubAgent 依赖这一点保持工具配对不被破坏）
+        // 异常全包：绝不抛出（ToolDispatcher/Teammate 依赖这一点保持工具配对不被破坏）
         try {
             return future.get(5, TimeUnit.MINUTES);
         } catch (java.util.concurrent.TimeoutException e) {
             future.cancel(true);
-            return new SubagentTurn("(子Agent调用超时)", java.util.Collections.emptyList());
+            return new SubagentTurn("(队友调用超时)", java.util.Collections.emptyList());
         } catch (Exception e) {
             Throwable cause = e.getCause() != null ? e.getCause() : e;
-            return new SubagentTurn("(子Agent调用失败: " + cause.getMessage() + ")",
+            return new SubagentTurn("(队友调用失败: " + cause.getMessage() + ")",
                     java.util.Collections.emptyList());
         }
     }

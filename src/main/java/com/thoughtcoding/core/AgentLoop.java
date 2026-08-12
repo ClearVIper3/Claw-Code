@@ -26,7 +26,8 @@ import java.util.Set;
  */
 public class AgentLoop {
     /** 只读工具：结果回喂模型即可，不在用户端 dump 内容（避免刷屏）。 */
-    private static final Set<String> QUIET_OUTPUT_TOOLS = Set.of("read", "glob", "skill", "task_get");
+    private static final Set<String> QUIET_OUTPUT_TOOLS =
+            Set.of("read", "glob", "skill", "task_get", "check_inbox");
 
     /** 后台工具（bash）的占位 tool_result 文案：配对保持 + 提示模型结果稍后以通知到达。 */
     private static final String BG_PLACEHOLDER =
@@ -229,7 +230,8 @@ public class AgentLoop {
     }
 
     /** 是否应把该工具调用卸载到后台执行：仅 bash 且显式 run_in_background=true。
-     *  TODO: subAgent 后台化（现同步执行）—— 接入后台队列前需先解决 worker 线程与主循环共享 line reader/终端的并发问题。 */
+     *  （原「subAgent 后台化」TODO 已由 Agent Teams 解决：后台队友经 chatOnceIsolated 隔离往返、
+     *   全静默、不碰共享 line reader/终端，见 com.thoughtcoding.team.Teammate。） */
     private boolean shouldRunBackground(ToolCall call) {
         if (!"bash".equals(call.getToolName()) || call.getParameters() == null) {
             return false;
@@ -302,14 +304,16 @@ public class AgentLoop {
 
     /** 显示原生工具执行结果。 */
     private void displayNativeToolResult(ToolCall call, ToolResult result) {
-        // 🔥 subAgent（子Agent）的过程与结论已由子Agent实时打印，这里不再重复 dump 输出，避免刷屏。
-        //    结论仍照常写回 history 回喂模型（见调用处），不受影响。
-        if ("subAgent".equals(call.getToolName())) {
+        // 🔥 团队工具（spawn_teammate/send_message/check_inbox）：回执已很简洁，由工具自身/唤醒消费者
+        //    负责展示（[team] 提示），这里不重复 dump 输出，避免刷屏。
+        if ("spawn_teammate".equals(call.getToolName())
+                || "send_message".equals(call.getToolName())
+                || "check_inbox".equals(call.getToolName())) {
             if (result.isSuccess()) {
-                context.getUi().getTerminal().writer().println("└ 子Agent已返回结论");
+                context.getUi().getTerminal().writer().println("└ 团队消息已处理");
                 context.getUi().getTerminal().writer().flush();
             } else {
-                context.getUi().displayError("❌ 子Agent失败: " + result.getError());
+                context.getUi().displayError("❌ 团队工具失败: " + result.getError());
             }
             return;
         }

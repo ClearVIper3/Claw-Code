@@ -22,7 +22,8 @@ import java.util.Map;
  *   write / edit → 固定 WARN
  *   bash         → Gate 1 硬拒绝 DENY，否则固定 WARN（危险模式追加提示）
  *   todo_write 已移除 → 任务系统 6 工具 → ALLOW（写入受限在受管的 .tasks/ 内，无副作用到工作区，静默放行）
- *   subAgent     → ALLOW（子Agent内部工具调用各自走权限管道，umbrella 再确认会双重弹框）
+ *   spawn_teammate / send_message / check_inbox → ALLOW（团队工具只写受管的消息总线，
+ *       队友内部工具调用各自走权限管道，umbrella 再确认会双重弹框）
  *   skill        → ALLOW（纯读取已扫描的本地技能文本，无副作用，静默放行）
  *   未知工具      → WARN
  */
@@ -116,7 +117,7 @@ public final class PermissionGate {
             case "bash"         -> checkBash(params);
             case "task_create", "task_list", "task_get",
                  "task_update", "task_claim", "task_complete" -> PermissionResult.ALLOW;
-            case "subAgent"     -> PermissionResult.ALLOW;
+            case "spawn_teammate", "send_message", "check_inbox" -> PermissionResult.ALLOW;
             case "skill"        -> PermissionResult.ALLOW;
             default             -> PermissionResult.warn("⚠️ 未知工具: " + toolName);
         };

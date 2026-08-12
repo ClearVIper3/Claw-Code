@@ -1,0 +1,201 @@
+package com.thoughtcoding.team;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.thoughtcoding.core.ThoughtCodingContext;
+import com.thoughtcoding.model.ChatMessage;
+import com.thoughtcoding.model.SubagentTurn;
+import com.thoughtcoding.model.ToolCall;
+import com.thoughtcoding.model.ToolCallRef;
+import com.thoughtcoding.model.ToolResult;
+import com.thoughtcoding.security.PermissionGate;
+import com.thoughtcoding.security.PermissionResult;
+import com.thoughtcoding.tool.ToolDispatcher;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+
+//TODO: 优化CLI表现
+/**
+ * 队友循环 —— 在【全新、隔离】的对话历史里、后台守护线程上跑一个独立的 agentic 循环。
+ *
+ * <p>由 {@code SubAgent} 改写而来，是「Agent Teams」的核心 worker。与主 {@code AgentLoop} 的区别：
+ * <ul>
+ *   <li>自带独立 history（不碰主对话），只通过消息总线向 lead 汇报；</li>
+ *   <li>看不到 {@code spawn_teammate} / {@code check_inbox} 工具（已从可见的工具规格中过滤），
+ *       因此不可能再派生队友/查看 lead 收件箱（防递归的唯一手段）；</li>
+ *   <li>调用 {@link com.thoughtcoding.service.AIService#chatOnceIsolated} —— 隔离的模型往返，
+ *       不抢占主循环共享的流式回调/生成状态，因此可以<b>与主循环并发</b>驱动同一个底层模型；</li>
+ *   <li><b>静默</b>：tokenSink 传 null、不写终端 —— 后台线程不碰共享 line reader/终端，
+ *       避免与主线程的输入提示符交织（老 subAgent 同步执行可流式，后台队友不行）；</li>
+ *   <li>直连 {@link PermissionGate#check}：保留 DENY 硬拦截、跳过需要交互确认的 WARN ——
+ *       后台线程不能占用 UI 的确认框；</li>
+ *   <li>每轮先 drain 自己邮箱（lead/其他队友发来的消息）注入历史；结束时向 lead 发
+ *       {@code result} 汇报。</li>
+ * </ul>
+ *
+ * <p><b>有界一次性 worker</b>（对齐 s15 教学版）：最多跑 {@code maxRounds} 轮，然后线程结束。
+ * 给已结束的队友再发消息 = 落入其邮箱但不再被读取（v1 不做 re-wake）。
+ */
+public final class Teammate implements Runnable {
+
+    /** 队友不可见的工具（防递归 + 防越权）：不能派生队友、不能读 lead 收件箱。 */
+    public static final Set<String> TEAMMATE_EXCLUDED_TOOLS = Set.of(
+            "spawn_teammate", "check_inbox");
+
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    private final ThoughtCodingContext context;
+    private final MessageBus bus;
+    private final String name;
+    private final String role;
+    private final String initialPrompt;
+    private final int maxRounds;
+
+    private volatile boolean stopRequested = false;
+
+    public Teammate(ThoughtCodingContext context, MessageBus bus,
+                    String name, String role, String initialPrompt, int maxRounds) {
+        this.context = context;
+        this.bus = bus;
+        this.name = name;
+        this.role = role;
+        this.initialPrompt = initialPrompt;
+        this.maxRounds = maxRounds;
+    }
+
+    public String getName() {
+        return name;
+    }
+
+    public void requestStop() {
+        this.stopRequested = true;
+    }
+
+    @Override
+    public void run() {
+        // 全新隔离历史：队友看不到主对话，任务信息全在 initialPrompt 里
+        List<ChatMessage> history = new ArrayList<>();
+        history.add(new ChatMessage("user", initialPrompt));
+
+        String sysPrompt = context.getContextManager().buildTeammateSystemPrompt(name, role);
+        ToolDispatcher dispatcher = new ToolDispatcher(context.getToolRegistry());
+
+        String lastText = "";
+
+        for (int round = 0; round < maxRounds; round++) {
+            if (stopRequested || Thread.currentThread().isInterrupted()) {
+                break;
+            }
+
+            // 1) 先收自己的邮箱（lead/其他队友发来的回复），逐条作为 user 消息注入
+            for (TeamMessage m : bus.readInbox(name)) {
+                history.add(new ChatMessage("user",
+                        "<team_message from=\"" + safe(m.getFrom()) + "\" type=\""
+                                + safe(m.getType()) + "\">\n" + safe(m.getContent())
+                                + "\n</team_message>"));
+            }
+
+            // 2) 一次隔离往返，静默（tokenSink=null），排除防递归工具
+            SubagentTurn turn;
+            try {
+                turn = context.getAiService().chatOnceIsolated(
+                        sysPrompt, history, null, TEAMMATE_EXCLUDED_TOOLS);
+            } catch (Exception e) {
+                // chatOnceIsolated 约定永不抛出，这里兜底一次防御
+                bus.send(name, MessageBus.LEAD,
+                        "队友 " + name + " 调用模型失败: " + e.getMessage(), "error");
+                return;
+            }
+
+            lastText = turn.getText();
+
+            // 3) 无工具调用 → 本轮即最终结论，汇报 lead 并结束
+            if (!turn.hasToolCalls()) {
+                bus.send(name, MessageBus.LEAD,
+                        (lastText == null || lastText.isBlank())
+                                ? "队友 " + name + " 结束，无文本结论。"
+                                : lastText,
+                        "result");
+                return;
+            }
+
+            // 记录携带工具调用的 assistant 消息（供下一轮重建 AiMessage.toolExecutionRequests）
+            history.add(ChatMessage.assistantWithToolCalls(turn.getText(), turn.getToolCalls()));
+
+            // 4) 逐个执行 —— 关键不变量：每个工具调用必须严格配对恰好一个 tool 结果，
+            //    否则队友绕过了主链路的 sanitizeToolPairs，下一轮会 400。
+            for (ToolCallRef ref : turn.getToolCalls()) {
+                String id = ref.getId();
+                String name = ref.getName();
+                Map<String, Object> params = parseArgs(ref.getArguments());
+
+                // 本地拦截 send_message：不过 ToolDispatcher，直接投递到总线（队友的通信手段）
+                if ("send_message".equals(name)) {
+                    String to = strParam(params.get("to"));
+                    if (to == null || to.isBlank()) {
+                        to = MessageBus.LEAD;
+                    }
+                    bus.send(this.name, to, strParam(params.get("content")), "message");
+                    history.add(ChatMessage.toolResult(id, name,
+                            "已投递给 " + to));
+                    continue;
+                }
+
+                ToolCall call = new ToolCall(name, params, null, false, 0, false, id);
+
+                // 静默硬拦截：只挡 DENY（后台线程无交互确认，WARN 直接放行）
+                PermissionResult perm = PermissionGate.check(name, params);
+                if (perm != null && perm.type() == PermissionResult.Type.DENY) {
+                    String msg = perm.message() != null ? perm.message() : "工具执行被阻止。";
+                    history.add(ChatMessage.toolResult(id, name, "已阻止 —— " + msg));
+                    continue;
+                }
+
+                // 执行 —— 任何异常都转成配对的 tool 结果，绝不逃逸破坏配对
+                try {
+                    ToolResult result = dispatcher.dispatch(call);
+                    String resultText = result.isSuccess()
+                            ? (result.getOutput() == null || result.getOutput().isBlank()
+                                ? "执行成功（无输出）。" : result.getOutput())
+                            : ("执行失败: " + result.getError());
+                    history.add(ChatMessage.toolResult(id, name, resultText));
+                } catch (Exception e) {
+                    history.add(ChatMessage.toolResult(id, name, "执行异常: " + e.getMessage()));
+                }
+            }
+        }
+
+        // 达到最大轮次 / 被停止：也必须给 lead 一条 result，避免 lead 空等
+        if (!stopRequested) {
+            bus.send(name, MessageBus.LEAD,
+                    "队友 " + name + " 已达最大轮次(" + maxRounds + ")，未产出最终结论。", "result");
+        }
+    }
+
+    /** 解析工具参数 JSON 为 Map；失败则退化为 {"input": 原始串}（与主服务一致的兜底）。 */
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> parseArgs(String argumentsJson) {
+        if (argumentsJson == null || argumentsJson.isBlank()) {
+            return new HashMap<>();
+        }
+        try {
+            return MAPPER.readValue(argumentsJson, Map.class);
+        } catch (Exception e) {
+            Map<String, Object> fallback = new HashMap<>();
+            fallback.put("input", argumentsJson);
+            return fallback;
+        }
+    }
+
+    private String strParam(Object v) {
+        return v == null ? null : v.toString();
+    }
+
+    private String safe(String s) {
+        return s == null ? "" : s;
+    }
+}

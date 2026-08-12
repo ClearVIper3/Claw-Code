@@ -38,6 +38,9 @@ public class AppConfig {
     @JsonProperty("cron")
     private CronConfig cron = new CronConfig(); // 定时任务系统配置
 
+    @JsonProperty("team")
+    private TeamConfig team = new TeamConfig(); // Agent Teams（后台队友）系统配置
+
 
     // Getters and Setters
     public Map<String, ModelConfig> getModels() {
@@ -109,6 +112,17 @@ public class AppConfig {
 
     public void setCron(CronConfig cron) {
         this.cron = cron;
+    }
+
+    public TeamConfig getTeam() {
+        if (team == null) {
+            team = new TeamConfig();
+        }
+        return team;
+    }
+
+    public void setTeam(TeamConfig team) {
+        this.team = team;
     }
 
 
@@ -533,6 +547,48 @@ public class AppConfig {
 
         public void setEnabled(boolean enabled) {
             this.enabled = enabled;
+        }
+    }
+
+    /**
+     * Agent Teams（后台队友）系统配置 —— 替代已移除的同步 subAgent，委派任务的唯一方式是 spawn_teammate。
+     * 非 LLM 驱动、不是工具开关——工具在 ThoughtCodingContext 按本配置条件注册（对齐 task/cron 的装配方式）。
+     *
+     * <p>默认 <b>enabled=true</b>（委派能力需在线）；队友在后台守护线程运行，不受 maxRounds 上限约束。
+     */
+    @Data
+    public static class TeamConfig {
+        @JsonProperty("enabled")
+        private boolean enabled = true; // 总开关：装配团队系统（消息总线 + 队友注册表 + 三个团队工具 + 收件箱唤醒）
+
+        @JsonProperty("maxTeammates")
+        private int maxTeammates = 4; // 同时最多存活的队友数
+
+        @JsonProperty("maxRounds")
+        private int maxRounds = 30; // 单个队友最多跑几轮（有界一次性 worker，对齐老 subAgent 的 30）
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public int getMaxTeammates() {
+            return maxTeammates;
+        }
+
+        public void setMaxTeammates(int maxTeammates) {
+            this.maxTeammates = maxTeammates;
+        }
+
+        public int getMaxRounds() {
+            return maxRounds;
+        }
+
+        public void setMaxRounds(int maxRounds) {
+            this.maxRounds = maxRounds;
         }
     }
 }

@@ -31,7 +31,10 @@ import com.thoughtcoding.task.tools.TaskCreateTool;
 import com.thoughtcoding.task.tools.TaskGetTool;
 import com.thoughtcoding.task.tools.TaskListTool;
 import com.thoughtcoding.task.tools.TaskUpdateTool;
-import com.thoughtcoding.tool.tools.SubAgentTool;
+import com.thoughtcoding.team.TeamManager;
+import com.thoughtcoding.team.tools.CheckInboxTool;
+import com.thoughtcoding.team.tools.SendMessageTool;
+import com.thoughtcoding.team.tools.SpawnTeammateTool;
 import com.thoughtcoding.tool.tools.SkillTool;
 import com.thoughtcoding.tool.tools.WriteTool;
 import com.thoughtcoding.ui.ThoughtCodingUI;
@@ -70,6 +73,9 @@ public class ThoughtCodingContext {
     // 🔥 新增定时任务(cron)调度器（可为 null = 定时任务系统关闭）
     private final CronScheduler cronScheduler;
 
+    // 🔥 新增团队(Agent Teams)管理器（可为 null = 团队系统关闭）
+    private final TeamManager teamManager;
+
     private ThoughtCodingContext(Builder builder) {
         this.appConfig = builder.appConfig;
         this.mcpConfig = builder.mcpConfig;
@@ -83,6 +89,7 @@ public class ThoughtCodingContext {
         this.contextManager = builder.contextManager;
         this.memoryService = builder.memoryService;
         this.cronScheduler = builder.cronScheduler;
+        this.teamManager = builder.teamManager;
     }
 
     public static ThoughtCodingContext initialize() {
@@ -178,6 +185,21 @@ public class ThoughtCodingContext {
             }
         }
 
+        // ── 团队(Agent Teams)系统：替换已移除的同步 subAgent，委派任务唯一方式是 spawn_teammate。
+        //    team.enabled=false 或初始化失败则整体为 null。消息总线 + 队友注册表在此创建，
+        //    唤醒消费者守护线程在 REPL 交互模式启动（见 ThoughtCodingCommand）。
+        AppConfig.TeamConfig teamCfg = appConfig.getTeam();
+        TeamManager teamManager = null;
+        if (teamCfg != null && teamCfg.isEnabled()) {
+            try {
+                teamManager = new TeamManager(teamCfg.getMaxTeammates(), teamCfg.getMaxRounds());
+            } catch (Exception e) {
+                System.err.println("❌ 团队系统初始化失败: " + e.getMessage());
+                e.printStackTrace();
+                teamManager = null;
+            }
+        }
+
         // 🔥 初始化 MCP 服务（如果启用）
         if (mcpConfig != null && mcpConfig.isEnabled()) {
             initializeMCPTools(mcpConfig, mcpService, toolRegistry);
@@ -222,11 +244,18 @@ public class ThoughtCodingContext {
                 .contextManager(contextManager)  // 🔥 添加 contextManager
                 .memoryService(memoryService)   // 🔥 添加 memoryService（可为 null = 记忆关闭）
                 .cronScheduler(cronScheduler)   // 🔥 添加 cronScheduler（可为 null = 定时任务关闭）
+                .teamManager(teamManager)       // 🔥 添加 teamManager（可为 null = 团队关闭）
                 .build();
 
-        // 🔥 子Agent 工具（subAgent）：需持有已构建好的 context 引用来派生隔离子循环，故在 build 之后注册。
-        // toolRegistry 是同一可变实例，LangChainService 每次请求都重新读 getToolSpecifications()，能看见它。
-        context.getToolRegistry().register(new SubAgentTool(context));
+        // 🔥 团队工具（spawn_teammate/send_message/check_inbox）：需持有已构建好的 context 来
+        // 访问 teamManager（派生后台队友循环），故在 build 之后注册（对齐原 SubAgentTool 的惯例）。
+        // teamManager 也在此后绑定 context（队友要复用 aiService/toolRegistry/contextManager）。
+        if (context.getTeamManager() != null) {
+            context.getTeamManager().setContext(context);
+            context.getToolRegistry().register(new SpawnTeammateTool(context));
+            context.getToolRegistry().register(new SendMessageTool(context));
+            context.getToolRegistry().register(new CheckInboxTool(context));
+        }
 
         return context;
     }
@@ -388,6 +417,9 @@ public class ThoughtCodingContext {
 
     // 🔥 新增 cronScheduler Getter（可为 null = 定时任务系统关闭）
     public CronScheduler getCronScheduler() { return cronScheduler; }
+
+    // 🔥 新增 teamManager Getter（可为 null = 团队系统关闭）
+    public TeamManager getTeamManager() { return teamManager; }
     public ThoughtCodingUI getUi() { return ui; }
     public PerformanceMonitor getPerformanceMonitor() { return performanceMonitor; }
 
@@ -419,6 +451,8 @@ public class ThoughtCodingContext {
         private MemoryService memoryService;
         // 🔥 新增定时任务(cron)调度器字段
         private CronScheduler cronScheduler;
+        // 🔥 新增团队(Agent Teams)管理器字段
+        private TeamManager teamManager;
 
         public Builder appConfig(AppConfig appConfig) {
             this.appConfig = appConfig;
@@ -481,6 +515,12 @@ public class ThoughtCodingContext {
         // 🔥 新增 cronScheduler Builder 方法
         public Builder cronScheduler(CronScheduler cronScheduler) {
             this.cronScheduler = cronScheduler;
+            return this;
+        }
+
+        // 🔥 新增 teamManager Builder 方法
+        public Builder teamManager(TeamManager teamManager) {
+            this.teamManager = teamManager;
             return this;
         }
 

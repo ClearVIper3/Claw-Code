@@ -515,9 +515,25 @@ public class ContextManager {
         sb.append("3. 只在确有需要时调用工具；纯咨询类问题直接用中文回答，不调用工具。\n");
         sb.append("4. 完成任务后用简洁自然的中文给出总结。\n");
 
+        appendTeamGuidance(sb);
         appendSkillCatalog(sb);
         appendMemory(sb);
         return sb.toString();
+    }
+
+    /**
+     * 🔥 团队协作指引（Agent Teams）：告诉主 Agent 何时用 spawn_teammate 派发后台队友、
+     * 如何收队友消息。团队系统关闭时工具不存在，本段仅作引导（无害）。
+     */
+    private void appendTeamGuidance(StringBuilder sb) {
+        sb.append("\n## 团队协作 (Agent Teams)\n");
+        sb.append("- 委派任务：spawn_teammate 派发一个【后台队友】异步执行（如“派个 reviewer 去审某文件”“并行调研几个独立区域”）。")
+          .append("调用后立即返回，你继续干活；队友通过消息总线向你汇报。\n");
+        sb.append("- 队友是异步的：派发后你不需要等——队友的汇报稍后会自动把你唤醒（交互模式下作为一条 <team_inbox> 消息）。\n");
+        sb.append("- 收队友消息：check_inbox 主动读取（读即清空）；队友发来的进度/疑问/最终结果都会出现在收件箱里。\n");
+        sb.append("- 给队友发消息：send_message 追加指令 / 答疑 / 提问；队友会在跑完当前轮后读到。\n");
+        sb.append("- 队友看不到当前对话历史：spawn_teammate 的 prompt 必须自包含（背景/目标/约束/期望结论）。\n");
+        sb.append("- 队友最多跑有限轮次后结束；给已结束的队友发消息 = 落入其邮箱但不再被读取。\n");
     }
 
     /** 技能目录（名称+简介）常驻注入 system prompt；完整正文由模型显式调用 skill 工具按需加载。 */
@@ -601,17 +617,22 @@ public class ContextManager {
     }
 
     /**
-     * 🔥 子Agent专用系统提示：风格对齐 {@link #buildNativeSystemPrompt}，
-     * 但强调「独立完成这一个任务、只回传最终结论」。
-     * 子Agent有自己隔离的对话历史、看不到主对话，故任务细节全在传入的 prompt 里。
-     * （递归无需在提示词里防：subAgent 工具已从子Agent可见的工具规格中过滤掉。）
+     * 🔥 队友系统提示：风格对齐 {@link #buildNativeSystemPrompt}，
+     * 但强调「独立完成被指派的任务、通过消息总线向 lead 汇报」。
+     * 队友有自己隔离的对话历史、看不到主对话，故任务细节全在传入的 prompt 里。
+     * （递归无需在提示词里防：spawn_teammate / check_inbox 已从队友可见的工具规格中过滤掉。）
+     *
+     * @param name 队友唯一标识
+     * @param role 队友角色描述
      */
-    public String buildSubagentSystemPrompt() {
+    public String buildTeammateSystemPrompt(String name, String role) {
         String cwd = System.getProperty("user.dir");
         StringBuilder sb = new StringBuilder();
         sb.append("## 指令\n");
         sb.append("- 始终用中文回答，解释与代码注释也用中文。\n");
-        sb.append("- 你是被主Agent派发的【子Agent】，负责独立、完整地完成下面这一个被指派的任务。\n");
+        sb.append("- 你是主Agent派发的【团队成员】，名字是 ").append(name == null ? "" : name)
+          .append("，角色：").append(role == null ? "" : role)
+          .append("。负责独立、完整地完成下面这一个被指派的任务。\n");
         sb.append("- 你看不到主对话历史，任务所需的全部信息都在给你的任务描述里。\n\n");
 
         sb.append("## 工作环境\n");
@@ -622,8 +643,9 @@ public class ContextManager {
         sb.append("## 规则\n");
         sb.append("1. 需要操作时直接调用系统提供的工具（其名称/说明/参数已由系统注入），不要把工具名写进普通文本，也不要编造工具结果。\n");
         sb.append("2. 改动已有文件优先用 edit；新建/覆盖用 write；读文件用 read；跑命令或搜索内容用 bash。\n");
-        sb.append("3. 完成后用简洁的中文给出最终结论——这段结论是唯一会回传给主Agent的内容，中间过程不会保留，务必把关键结果讲清楚。\n");
-        sb.append("4. 如涉及任务系统（task 工具）：只操作 owner 属于你自己的任务；未 claim 的任务先 task_claim 再操作；不要 task_complete 或删除非你创建的任务。\n");
+        sb.append("3. 用 send_message 向 lead 汇报：进度、疑问、以及最终的<b>完整结论</b>（lead 看不到你的中间过程）。\n");
+        sb.append("4. 你不能再派发队友（spawn_teammate 不可用）——独立完成你的任务即可。\n");
+        sb.append("5. 如涉及任务系统（task 工具）：只操作 owner 属于你自己的任务；未 claim 的任务先 task_claim 再操作；不要 task_complete 或删除非你创建的任务。\n");
 
         appendSkillCatalog(sb);
         return sb.toString();

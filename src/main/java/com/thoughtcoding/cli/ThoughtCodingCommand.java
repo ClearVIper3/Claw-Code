@@ -9,6 +9,7 @@ import com.thoughtcoding.ui.ThoughtCodingUI;
 import com.thoughtcoding.config.MCPConfig;
 import com.thoughtcoding.config.MCPServerConfig;
 import com.thoughtcoding.cron.CronJob;
+import com.thoughtcoding.team.TeamManager;
 import picocli.CommandLine;
 
 import java.util.*;
@@ -190,6 +191,45 @@ public class ThoughtCodingCommand implements Callable<Integer> {
                         agentLock.unlock();
                     }
 
+                    // 🔥 单次模式无唤醒消费者：等队友最多 waitMs 后主动 drain lead 收件箱
+                    //（有界 drain-before-exit，避免后台守护线程被直接杀掉、结果丢失）。
+                    TeamManager teamManager = context.getTeamManager();
+                    if (teamManager != null) {
+                        long deadline = System.currentTimeMillis() + 30_000;
+                        boolean sawMessage = false;
+                        while (System.currentTimeMillis() < deadline) {
+                            if (teamManager.leadHasMail()) {
+                                List<com.thoughtcoding.team.TeamMessage> msgs = teamManager.drainLeadInbox();
+                                if (!msgs.isEmpty()) {
+                                    StringBuilder sb = new StringBuilder("<team_inbox>\n");
+                                    for (com.thoughtcoding.team.TeamMessage m : msgs) {
+                                        sb.append("<message from=\"").append(m.getFrom())
+                                          .append("\" type=\"").append(m.getType()).append("\">\n")
+                                          .append(m.getContent()).append("\n</message>\n");
+                                    }
+                                    sb.append("</team_inbox>");
+                                    ui.displayInfo("[team] 单次模式收到 " + msgs.size()
+                                            + " 条队友消息，注入后续回合…");
+                                    agentLock.lock();
+                                    try {
+                                        currentAgentLoop.processInput(sb.toString());
+                                    } finally {
+                                        agentLock.unlock();
+                                    }
+                                    sawMessage = true;
+                                }
+                            }
+                            if (teamManager.active().stream().noneMatch(h -> !h.isFinished())) {
+                                break; // 没有仍在跑的队友 → 不再等
+                            }
+                            Thread.sleep(500);
+                        }
+                        teamManager.shutdown();
+                        if (sawMessage) {
+                            ui.displayInfo("[team] 已收集队友结果，继续后续回合后退出。");
+                        }
+                    }
+
                     // 单次模式结束：关闭后台任务管理器
                     currentAgentLoop.shutdownBackground();
 
@@ -264,12 +304,14 @@ public class ThoughtCodingCommand implements Callable<Integer> {
     private Integer startInteractiveMode(AgentLoop agentLoop, ThoughtCodingUI ui) {
         ui.displayInfo("Entering interactive mode. Type 'exit' to quit, 'help' for commands.");
 
-        // 🔥 定时任务(cron)消费者：独立守护线程，到点任务由 cronScheduler 入队、此线程持锁自动执行。
+        // 🔥 定时任务(cron) + 团队(teammate)唤醒消费者：独立守护线程，到点任务/队友消息由
+        // cronScheduler 或 MessageBus 入队、此线程持锁自动执行。
         // 主线程在 readLine 阻塞时【不】持锁 → tryLock 成功 → 自动回合照常跑；
         // 主线程正在跑一轮时持锁 → tryLock 失败 → 跳过本跳、下跳再试，绝不与用户回合并发。
         var cronScheduler = context.getCronScheduler();
+        var teamManager = context.getTeamManager();
         Thread cronConsumer = null;
-        if (cronScheduler != null) {
+        if (cronScheduler != null || teamManager != null) {
             cronConsumer = new Thread(() -> {
                 while (!Thread.currentThread().isInterrupted()) {
                     try {
@@ -281,26 +323,51 @@ public class ThoughtCodingCommand implements Callable<Integer> {
                         continue; // 用户回合正在跑（或即将开始）→ 跳过
                     }
                     try {
-                        List<CronJob> jobs = cronScheduler.drainFired();
-                        if (!jobs.isEmpty()) {
-                            // 定时任务本就无人值守：drain 期间自动放行工具，避免定时轮
-                            // 在 UI LineReader 上弹确认、与主线程的输入 LineReader 抢读同一终端。
-                            boolean prev = agentLoop.isAutoApproveMode();
-                            agentLoop.setAutoApprove(true);
-                            try {
-                                for (CronJob job : jobs) {
+                        // 空转不要碰 auto-approve：无到点 cron 且无队友消息时直接跳过，
+                        // 否则每 200ms 的 setAutoApprove(true)+还原会不停打印"自动批准/交互确认"刷屏
+                        // （回归自 cron+team 合并：原 cron 版把 setAutoApprove 放在 !jobs.isEmpty() 内部）。
+                        boolean cronPending = cronScheduler != null && cronScheduler.hasFired();
+                        boolean teamPending = teamManager != null && teamManager.leadHasMail();
+                        if (!cronPending && !teamPending) {
+                            continue;   // finally 里 unlock
+                        }
+                        // 定时任务本就无人值守：drain 期间自动放行工具，避免定时轮
+                        // 在 UI LineReader 上弹确认、与主线程的输入 LineReader 抢读同一终端。
+                        // 团队唤醒同样无人值守（队友消息自动到达），共用同一 auto-approve 窗口。
+                        boolean prev = agentLoop.isAutoApproveMode();
+                        agentLoop.setAutoApprove(true);
+                        try {
+                            // (a) cron 任务
+                            if (cronPending) {
+                                for (CronJob job : cronScheduler.drainFired()) {
                                     ui.displayInfo("[cron fired] " + job.getPrompt());
                                     agentLoop.processInput("[Scheduled] " + job.getPrompt());
                                 }
-                            } finally {
-                                agentLoop.setAutoApprove(prev);
                             }
+                            // (b) 团队：把全部队友消息合并成一条 <team_inbox> user 消息，只唤醒一次
+                            if (teamPending) {
+                                List<com.thoughtcoding.team.TeamMessage> msgs = teamManager.drainLeadInbox();
+                                if (!msgs.isEmpty()) {
+                                    StringBuilder sb = new StringBuilder("<team_inbox>\n");
+                                    for (com.thoughtcoding.team.TeamMessage m : msgs) {
+                                        sb.append("<message from=\"").append(m.getFrom())
+                                          .append("\" type=\"").append(m.getType()).append("\">\n")
+                                          .append(m.getContent()).append("\n</message>\n");
+                                    }
+                                    sb.append("</team_inbox>");
+                                    ui.displayInfo("[team] " + msgs.size()
+                                            + " 条来自队友的消息，正在唤醒主Agent处理…");
+                                    agentLoop.processInput(sb.toString());
+                                }
+                            }
+                        } finally {
+                            agentLoop.setAutoApprove(prev);
                         }
                     } finally {
                         agentLock.unlock();
                     }
                 }
-            }, "cron-queue-consumer");
+            }, "wake-consumer");
             cronConsumer.setDaemon(true);
             cronConsumer.start();
         }
@@ -321,12 +388,15 @@ public class ThoughtCodingCommand implements Callable<Integer> {
 
                 // 退出命令
                 if (trimmedInput.equalsIgnoreCase("exit") || trimmedInput.equalsIgnoreCase("quit")) {
-                    // 🔥 关停定时任务消费者 + 调度器（守护线程即便漏网也不阻塞 JVM 退出）
+                    // 🔥 关停定时任务消费者 + 调度器 + 团队（守护线程即便漏网也不阻塞 JVM 退出）
                     if (cronConsumer != null) {
                         cronConsumer.interrupt();
                     }
                     if (cronScheduler != null) {
                         cronScheduler.shutdown();
+                    }
+                    if (teamManager != null) {
+                        teamManager.shutdown();
                     }
                     // 关闭后台任务管理器（中断在跑任务）
                     agentLoop.shutdownBackground();
