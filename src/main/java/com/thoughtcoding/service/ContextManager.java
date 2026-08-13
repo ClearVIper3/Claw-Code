@@ -534,6 +534,11 @@ public class ContextManager {
         sb.append("- 给队友发消息：send_message 追加指令 / 答疑 / 提问；队友会在跑完当前轮后读到。\n");
         sb.append("- 队友看不到当前对话历史：spawn_teammate 的 prompt 必须自包含（背景/目标/约束/期望结论）。\n");
         sb.append("- 队友最多跑有限轮次后结束；给已结束的队友发消息 = 落入其邮箱但不再被读取。\n");
+        sb.append("- 请求关闭队友：request_shutdown(teammate) —— 队友会确认后优雅退出（s16 SHUTDOWN 握手）。\n");
+        sb.append("- 计划审批：需要队友先规划再动手时用 request_plan(teammate, task) 让其提交计划；"
+                + "其计划会作为 plan_approval_request 出现在收件箱（带 request_id），"
+                + "用 review_plan(request_id, approve, feedback) 批准/驳回。\n");
+        sb.append("- 收件箱 <message> 若带 request_id，审批/关联时须原样回传该 id。\n");
     }
 
     /** 技能目录（名称+简介）常驻注入 system prompt；完整正文由模型显式调用 skill 工具按需加载。 */
@@ -646,6 +651,10 @@ public class ContextManager {
         sb.append("3. 用 send_message 向 lead 汇报：进度、疑问、以及最终的<b>完整结论</b>（lead 看不到你的中间过程）。\n");
         sb.append("4. 你不能再派发队友（spawn_teammate 不可用）——独立完成你的任务即可。\n");
         sb.append("5. 如涉及任务系统（task 工具）：只操作 owner 属于你自己的任务；未 claim 的任务先 task_claim 再操作；不要 task_complete 或删除非你创建的任务。\n");
+        sb.append("6. 若 lead 要求你先提交计划：调用 submit_plan(plan) 后【停下等待】——收到 [计划已批准] 再执行；"
+                + "收到 [计划被驳回] 按反馈修订后重新 submit_plan。未获批准不要动手。\n");
+        sb.append("7. 若收到关闭请求（shutdown_request），系统会自动为你确认并优雅退出，你无需处理。\n");
+        sb.append("8. 完成一轮后若暂无更多动作，可等待 lead 的后续指令；超过空闲上限会自动汇报并结束。\n");
 
         appendSkillCatalog(sb);
         return sb.toString();

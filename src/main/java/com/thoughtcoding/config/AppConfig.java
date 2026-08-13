@@ -554,7 +554,7 @@ public class AppConfig {
      * Agent Teams（后台队友）系统配置 —— 替代已移除的同步 subAgent，委派任务的唯一方式是 spawn_teammate。
      * 非 LLM 驱动、不是工具开关——工具在 ThoughtCodingContext 按本配置条件注册（对齐 task/cron 的装配方式）。
      *
-     * <p>默认 <b>enabled=true</b>（委派能力需在线）；队友在后台守护线程运行，不受 maxRounds 上限约束。
+     * <p>默认 <b>enabled=true</b>（委派能力需在线）；队友在后台守护线程运行，活跃回合受 maxRounds 上限约束。
      */
     @Data
     public static class TeamConfig {
@@ -565,7 +565,10 @@ public class AppConfig {
         private int maxTeammates = 4; // 同时最多存活的队友数
 
         @JsonProperty("maxRounds")
-        private int maxRounds = 30; // 单个队友最多跑几轮（有界一次性 worker，对齐老 subAgent 的 30）
+        private int maxRounds = 30; // 单个队友最多跑几轮活跃 LLM 回合（对齐老 subAgent 的 30）
+
+        @JsonProperty("idleTimeoutSeconds")
+        private int idleTimeoutSeconds = 60; // 队友在自然停顿点空转等待后续消息/协议回复的上限秒（不占用 maxRounds）
 
         public boolean isEnabled() {
             return enabled;
@@ -589,6 +592,14 @@ public class AppConfig {
 
         public void setMaxRounds(int maxRounds) {
             this.maxRounds = maxRounds;
+        }
+
+        public int getIdleTimeoutSeconds() {
+            return idleTimeoutSeconds;
+        }
+
+        public void setIdleTimeoutSeconds(int idleTimeoutSeconds) {
+            this.idleTimeoutSeconds = idleTimeoutSeconds;
         }
     }
 }

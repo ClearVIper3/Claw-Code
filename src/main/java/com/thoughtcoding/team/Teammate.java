@@ -37,14 +37,18 @@ import java.util.Set;
  *       {@code result} 汇报。</li>
  * </ul>
  *
- * <p><b>有界一次性 worker</b>（对齐 s15 教学版）：最多跑 {@code maxRounds} 轮，然后线程结束。
- * 给已结束的队友再发消息 = 落入其邮箱但不再被读取（v1 不做 re-wake）。
+ * <p><b>有界协议 worker</b>（对齐 s16 教学版）：活跃回合最多跑 {@code maxRounds} 轮；
+ * 自然停顿点（无工具调用的回合）进入<b>有限等待</b>——轮询自己邮箱最多 {@code idleTimeoutSeconds}，
+ * 收到协议消息/新指令就继续，超时则向 lead 发 {@code result} 汇报并退出。空转等待<b>不</b>占用
+ * {@code maxRounds}（只约束活跃 LLM 回合）。等待期间响应 {@code stopRequested}/{@code interrupt}，
+ * {@link TeamManager#shutdown} 仍可释放每个队友；daemon 线程不阻塞 JVM 退出。
+ * 给已结束的队友再发消息 = 落入其邮箱但不再被读取。</p>
  */
 public final class Teammate implements Runnable {
 
-    /** 队友不可见的工具（防递归 + 防越权）：不能派生队友、不能读 lead 收件箱。 */
+    /** 队友不可见的工具（防递归 + 防越权）：不能派生队友、不能读 lead 收件箱、不能使用 lead 侧协议工具。 */
     public static final Set<String> TEAMMATE_EXCLUDED_TOOLS = Set.of(
-            "spawn_teammate", "check_inbox");
+            "spawn_teammate", "check_inbox", "request_shutdown", "request_plan", "review_plan");
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
@@ -54,17 +58,20 @@ public final class Teammate implements Runnable {
     private final String role;
     private final String initialPrompt;
     private final int maxRounds;
+    private final int idleTimeoutSeconds;
 
     private volatile boolean stopRequested = false;
 
     public Teammate(ThoughtCodingContext context, MessageBus bus,
-                    String name, String role, String initialPrompt, int maxRounds) {
+                    String name, String role, String initialPrompt,
+                    int maxRounds, int idleTimeoutSeconds) {
         this.context = context;
         this.bus = bus;
         this.name = name;
         this.role = role;
         this.initialPrompt = initialPrompt;
         this.maxRounds = maxRounds;
+        this.idleTimeoutSeconds = idleTimeoutSeconds;
     }
 
     public String getName() {
@@ -86,20 +93,43 @@ public final class Teammate implements Runnable {
 
         String lastText = "";
 
-        for (int round = 0; round < maxRounds; round++) {
+        // 活跃回合计数：只统计真实的 LLM 回合，有限等待（空转轮询）不计入，避免 maxRounds 被等待消耗
+        int activeRounds = 0;
+        while (activeRounds < maxRounds) {
             if (stopRequested || Thread.currentThread().isInterrupted()) {
                 break;
             }
 
-            // 1) 先收自己的邮箱（lead/其他队友发来的回复），逐条作为 user 消息注入
+            // 1) 先收自己的邮箱（lead/其他队友发来的回复），按协议类型分发：
+            //    shutdown_request → 自动确认并优雅退出；plan_approval_response → 注入批准/驳回；
+            //    其余 → 作为 <team_message> 注入历史
             for (TeamMessage m : bus.readInbox(name)) {
-                history.add(new ChatMessage("user",
-                        "<team_message from=\"" + safe(m.getFrom()) + "\" type=\""
-                                + safe(m.getType()) + "\">\n" + safe(m.getContent())
-                                + "\n</team_message>"));
+                String mType = m.getType();
+                if (ProtocolState.SHUTDOWN_REQUEST.equals(mType)) {
+                    // 优雅关机握手：回 shutdown_response(approve=true) + 一条 result，然后结束
+                    bus.send(name, MessageBus.LEAD, "同意关闭。",
+                            ProtocolState.SHUTDOWN_RESPONSE, m.getRequestId(),
+                            java.util.Map.of("approve", true));
+                    bus.send(name, MessageBus.LEAD,
+                            "队友 " + name + " 收到关闭请求，已优雅退出。", "result");
+                    return;
+                } else if (ProtocolState.PLAN_RESPONSE.equals(mType)) {
+                    boolean approve = m.getMetadata() != null
+                            && Boolean.TRUE.equals(m.getMetadata().get("approve"));
+                    String feedback = m.getMetadata() == null
+                            ? "" : String.valueOf(m.getMetadata().getOrDefault("feedback", ""));
+                    history.add(new ChatMessage("user", approve
+                            ? "[计划已批准] 请按计划继续执行。"
+                            : "[计划被驳回] 反馈：" + feedback + "\n请据此修订后再 submit_plan。"));
+                } else {
+                    history.add(new ChatMessage("user",
+                            "<team_message from=\"" + safe(m.getFrom()) + "\" type=\""
+                                    + safe(mType) + "\">\n" + safe(m.getContent())
+                                    + "\n</team_message>"));
+                }
             }
 
-            // 2) 一次隔离往返，静默（tokenSink=null），排除防递归工具
+            // 2) 一次隔离往返，静默（tokenSink=null），排除防递归/lead 侧工具
             SubagentTurn turn;
             try {
                 turn = context.getAiService().chatOnceIsolated(
@@ -110,16 +140,40 @@ public final class Teammate implements Runnable {
                         "队友 " + name + " 调用模型失败: " + e.getMessage(), "error");
                 return;
             }
-
+            activeRounds++;
             lastText = turn.getText();
 
-            // 3) 无工具调用 → 本轮即最终结论，汇报 lead 并结束
+            // 3) 无工具调用 → 有限等待：空转轮询自己邮箱最多 idleTimeoutSeconds，
+            //    收到新消息就回到循环顶重新分发+新一轮（不占 activeRounds）；超时则汇报并结束。
+            //    shutdown 请求期间：每轮检查 stopRequested/interrupt，sleep 被中断即退出。
             if (!turn.hasToolCalls()) {
-                bus.send(name, MessageBus.LEAD,
-                        (lastText == null || lastText.isBlank())
-                                ? "队友 " + name + " 结束，无文本结论。"
-                                : lastText,
-                        "result");
+                long deadline = System.currentTimeMillis() + idleTimeoutSeconds * 1000L;
+                boolean resumed = false;
+                while (System.currentTimeMillis() < deadline) {
+                    if (stopRequested || Thread.currentThread().isInterrupted()) {
+                        break;
+                    }
+                    if (bus.hasMessages(name)) {
+                        resumed = true;
+                        break;
+                    }
+                    try {
+                        Thread.sleep(250);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
+                if (resumed) {
+                    continue; // 回到循环顶重新 drain+dispatch+新一轮
+                }
+                if (!stopRequested) {
+                    bus.send(name, MessageBus.LEAD,
+                            (lastText == null || lastText.isBlank())
+                                    ? "队友 " + name + " 结束，无文本结论。"
+                                    : lastText,
+                            "result");
+                }
                 return;
             }
 
@@ -132,6 +186,17 @@ public final class Teammate implements Runnable {
                 String id = ref.getId();
                 String name = ref.getName();
                 Map<String, Object> params = parseArgs(ref.getArguments());
+
+                // 本地拦截 submit_plan：不过 ToolDispatcher，直接经 TeamManager 登记 pending 并投递给 lead
+                // （对齐 send_message 双路：全局注册进队友规格、本地拦截保证 sender 身份正确）。
+                // 必须补一条配对的 tool 结果，否则下一轮 400。
+                if ("submit_plan".equals(name)) {
+                    String plan = strParam(params.get("plan"));
+                    String receipt = context.getTeamManager().submitPlan(
+                            this.name, plan == null ? "" : plan);
+                    history.add(ChatMessage.toolResult(id, name, receipt));
+                    continue;
+                }
 
                 // 本地拦截 send_message：不过 ToolDispatcher，直接投递到总线（队友的通信手段）
                 if ("send_message".equals(name)) {

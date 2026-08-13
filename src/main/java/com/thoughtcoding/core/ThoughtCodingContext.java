@@ -33,8 +33,12 @@ import com.thoughtcoding.task.tools.TaskListTool;
 import com.thoughtcoding.task.tools.TaskUpdateTool;
 import com.thoughtcoding.team.TeamManager;
 import com.thoughtcoding.team.tools.CheckInboxTool;
+import com.thoughtcoding.team.tools.RequestPlanTool;
+import com.thoughtcoding.team.tools.RequestShutdownTool;
+import com.thoughtcoding.team.tools.ReviewPlanTool;
 import com.thoughtcoding.team.tools.SendMessageTool;
 import com.thoughtcoding.team.tools.SpawnTeammateTool;
+import com.thoughtcoding.team.tools.SubmitPlanTool;
 import com.thoughtcoding.tool.tools.SkillTool;
 import com.thoughtcoding.tool.tools.WriteTool;
 import com.thoughtcoding.ui.ThoughtCodingUI;
@@ -192,7 +196,8 @@ public class ThoughtCodingContext {
         TeamManager teamManager = null;
         if (teamCfg != null && teamCfg.isEnabled()) {
             try {
-                teamManager = new TeamManager(teamCfg.getMaxTeammates(), teamCfg.getMaxRounds());
+                teamManager = new TeamManager(teamCfg.getMaxTeammates(), teamCfg.getMaxRounds(),
+                        teamCfg.getIdleTimeoutSeconds());
             } catch (Exception e) {
                 System.err.println("❌ 团队系统初始化失败: " + e.getMessage());
                 e.printStackTrace();
@@ -247,14 +252,19 @@ public class ThoughtCodingContext {
                 .teamManager(teamManager)       // 🔥 添加 teamManager（可为 null = 团队关闭）
                 .build();
 
-        // 🔥 团队工具（spawn_teammate/send_message/check_inbox）：需持有已构建好的 context 来
-        // 访问 teamManager（派生后台队友循环），故在 build 之后注册（对齐原 SubAgentTool 的惯例）。
+        // 🔥 团队工具（spawn_teammate/send_message/check_inbox + s16 协议 request_shutdown/request_plan/
+        // review_plan/submit_plan）：需持有已构建好的 context 来访问 teamManager（派生后台队友循环、
+        // 登记协议 pending），故在 build 之后注册（对齐原 SubAgentTool 的惯例）。
         // teamManager 也在此后绑定 context（队友要复用 aiService/toolRegistry/contextManager）。
         if (context.getTeamManager() != null) {
             context.getTeamManager().setContext(context);
             context.getToolRegistry().register(new SpawnTeammateTool(context));
             context.getToolRegistry().register(new SendMessageTool(context));
             context.getToolRegistry().register(new CheckInboxTool(context));
+            context.getToolRegistry().register(new RequestShutdownTool(context));
+            context.getToolRegistry().register(new RequestPlanTool(context));
+            context.getToolRegistry().register(new ReviewPlanTool(context));
+            context.getToolRegistry().register(new SubmitPlanTool(context));
         }
 
         return context;

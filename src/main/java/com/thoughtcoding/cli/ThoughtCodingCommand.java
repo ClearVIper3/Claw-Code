@@ -195,7 +195,11 @@ public class ThoughtCodingCommand implements Callable<Integer> {
                     //（有界 drain-before-exit，避免后台守护线程被直接杀掉、结果丢失）。
                     TeamManager teamManager = context.getTeamManager();
                     if (teamManager != null) {
-                        long deadline = System.currentTimeMillis() + 30_000;
+                        // 单次模式无唤醒消费者：等队友消息时留出 idleTimeoutSeconds 的空闲等待窗口，
+                        // 让至少一轮计划审批握手（队友 submit_plan → lead review_plan）能走完，
+                        // 再加 30s 兜底（后台守护线程被直接杀掉会丢结果）。
+                        int idleSecs = Math.max(context.getAppConfig().getTeam().getIdleTimeoutSeconds(), 0);
+                        long deadline = System.currentTimeMillis() + 30_000 + idleSecs * 1000L;
                         boolean sawMessage = false;
                         while (System.currentTimeMillis() < deadline) {
                             if (teamManager.leadHasMail()) {
@@ -204,7 +208,11 @@ public class ThoughtCodingCommand implements Callable<Integer> {
                                     StringBuilder sb = new StringBuilder("<team_inbox>\n");
                                     for (com.thoughtcoding.team.TeamMessage m : msgs) {
                                         sb.append("<message from=\"").append(m.getFrom())
-                                          .append("\" type=\"").append(m.getType()).append("\">\n")
+                                          .append("\" type=\"").append(m.getType()).append("\"");
+                                        if (m.getRequestId() != null) {
+                                            sb.append(" request_id=\"").append(m.getRequestId()).append("\"");
+                                        }
+                                        sb.append(">\n")
                                           .append(m.getContent()).append("\n</message>\n");
                                     }
                                     sb.append("</team_inbox>");
@@ -344,14 +352,19 @@ public class ThoughtCodingCommand implements Callable<Integer> {
                                     agentLoop.processInput("[Scheduled] " + job.getPrompt());
                                 }
                             }
-                            // (b) 团队：把全部队友消息合并成一条 <team_inbox> user 消息，只唤醒一次
+                            // (b) 团队：把全部队友消息合并成一条 <team_inbox> user 消息，只唤醒一次。
+                            //     带 request_id 的协议消息原样上浮，lead 据此 review_plan 等。
                             if (teamPending) {
                                 List<com.thoughtcoding.team.TeamMessage> msgs = teamManager.drainLeadInbox();
                                 if (!msgs.isEmpty()) {
                                     StringBuilder sb = new StringBuilder("<team_inbox>\n");
                                     for (com.thoughtcoding.team.TeamMessage m : msgs) {
                                         sb.append("<message from=\"").append(m.getFrom())
-                                          .append("\" type=\"").append(m.getType()).append("\">\n")
+                                          .append("\" type=\"").append(m.getType()).append("\"");
+                                        if (m.getRequestId() != null) {
+                                            sb.append(" request_id=\"").append(m.getRequestId()).append("\"");
+                                        }
+                                        sb.append(">\n")
                                           .append(m.getContent()).append("\n</message>\n");
                                     }
                                     sb.append("</team_inbox>");

@@ -30,7 +30,10 @@ public final class MessageBus {
     /** 保留收件人：主 Agent（lead）。所有队友的最终结果都发到这里。 */
     public static final String LEAD = "lead";
 
-    private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final ObjectMapper MAPPER = new ObjectMapper()
+            // 容忍未知字段：s16 加了 requestId/metadata 后，旧版 .jsonl 行（无这两字段）
+            // 读取仍兼容；否则 readInbox 会在单行 catch 里静默丢弃整条旧消息。
+            .configure(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
     /** 每个收件人一把锁：邮箱 append 与 read+delete 必须在同一把锁内原子完成。 */
     private final ConcurrentHashMap<String, Object> locks = new ConcurrentHashMap<>();
@@ -53,6 +56,12 @@ public final class MessageBus {
     /** 发送一条消息到 {@code to} 的邮箱（append 一行）。收件人不存在时自动建邮箱。 */
     public void send(String from, String to, String content, String type) {
         send(new TeamMessage(from, to, content, type));
+    }
+
+    /** s16 协议 send：携带 requestId 与 metadata（均可为 null；null 时不序列化进 .jsonl）。 */
+    public void send(String from, String to, String content, String type,
+                     String requestId, java.util.Map<String, Object> metadata) {
+        send(new TeamMessage(from, to, content, type, requestId, metadata));
     }
 
     public void send(TeamMessage msg) {

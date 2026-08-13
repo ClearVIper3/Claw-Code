@@ -49,8 +49,11 @@ public class CheckInboxTool extends BaseTool {
                 String from = m.getFrom() == null ? "" : m.getFrom();
                 String type = m.getType() == null ? "message" : m.getType();
                 String content = m.getContent() == null ? "" : m.getContent();
-                sb.append("  [").append(type).append("] 来自 ").append(from).append("：")
-                        .append(content).append("\n");
+                sb.append("  [").append(type).append("] 来自 ").append(from);
+                if (m.getRequestId() != null) {
+                    sb.append(" [request_id=").append(m.getRequestId()).append("]");
+                }
+                sb.append("：").append(content).append("\n");
             }
             return success(sb.toString().stripTrailing(), System.currentTimeMillis() - startTime);
         } catch (Exception e) {
