@@ -9,10 +9,12 @@ import com.thoughtcoding.model.ToolCallRef;
 import com.thoughtcoding.model.ToolResult;
 import com.thoughtcoding.security.PermissionGate;
 import com.thoughtcoding.security.PermissionResult;
+import com.thoughtcoding.security.Sandbox;
 import com.thoughtcoding.task.Task;
 import com.thoughtcoding.task.TaskStore;
 import com.thoughtcoding.tool.ToolDispatcher;
 
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -60,9 +62,10 @@ import java.util.Set;
  */
 public final class Teammate implements Runnable {
 
-    /** 队友不可见的工具（防递归 + 防越权）：不能派生队友、不能读 lead 收件箱、不能使用 lead 侧协议工具。 */
+    /** 队友不可见的工具（防递归 + 防越权）：不能派生队友、不能读 lead 收件箱、不能使用 lead 侧协议工具、不能管理 worktree。 */
     public static final Set<String> TEAMMATE_EXCLUDED_TOOLS = Set.of(
-            "spawn_teammate", "check_inbox", "request_shutdown", "request_plan", "review_plan");
+            "spawn_teammate", "check_inbox", "request_shutdown", "request_plan", "review_plan",
+            "create_worktree", "remove_worktree", "keep_worktree");
 
     /** WORK 阶段边界历史裁剪：保留首条 + 末尾 K 条（对齐 s17 messages[-20:]）。 */
     private static final int HISTORY_KEEP_TAIL = 20;
@@ -86,6 +89,8 @@ public final class Teammate implements Runnable {
     private String lastText = "";
     /** 共享任务存储（可 null = 任务系统关闭，此时 auto-claim 为空操作）。 */
     private TaskStore taskStore;
+    /** worktree 根目录名（相对仓库根，如 ".worktrees"）；worktree 系统关闭或配置缺失时为 null（隔离禁用）。 */
+    private String worktreeBaseDir;
 
     private volatile boolean stopRequested = false;
 
@@ -130,6 +135,16 @@ public final class Teammate implements Runnable {
         dispatcher = new ToolDispatcher(context.getToolRegistry());
         taskStore = context.getContextManager() != null
                 ? context.getContextManager().getTaskStore() : null;
+        // worktree 隔离根目录（s18）：仅在功能开启时启用；队友认领绑定任务后 cwd 切到 <baseDir>/<wt>
+        try {
+            this.worktreeBaseDir = context.getAppConfig() != null
+                    && context.getAppConfig().getWorktree() != null
+                    && context.getAppConfig().getWorktree().isEnabled()
+                    ? context.getAppConfig().getWorktree().getBaseDir()
+                    : null;
+        } catch (Exception e) {
+            this.worktreeBaseDir = null;
+        }
 
         boolean firstPhase = true;
         while (true) {
@@ -237,6 +252,12 @@ public final class Teammate implements Runnable {
                 String toolName = ref.getName();
                 Map<String, Object> params = parseArgs(ref.getArguments());
 
+                // s18：队友手动 task_claim 时强制 owner=自己——否则工具默认 "agent"，
+                // 之后 findActiveWorktreeFor(队友名) 匹配不到 owner="agent"，worktree cwd 推导会静默失效。
+                if ("task_claim".equals(toolName)) {
+                    params.put("owner", this.name);
+                }
+
                 // 本地拦截 submit_plan：不过 ToolDispatcher，直接经 TeamManager 登记 pending 并投递给 lead
                 // （对齐 send_message 双路：全局注册进队友规格、本地拦截保证 sender 身份正确）。
                 // 必须补一条配对的 tool 结果，否则下一轮 400。
@@ -270,9 +291,22 @@ public final class Teammate implements Runnable {
                     continue;
                 }
 
-                // 执行 —— 任何异常都转成配对的 tool 结果，绝不逃逸破坏配对
+                // 执行 —— 任何异常都转成配对的 tool 结果，绝不逃逸破坏配对。
+                // s18：若本队友当前认领了绑定 worktree 的任务，把 read/write/edit/glob/bash 的工作根
+                // 临时切到该 worktree 副本（本线程独占），与其它队友/仓库根隔离。
+                Path wtDir = currentWorktreeDir();
                 try {
-                    ToolResult result = dispatcher.dispatch(call);
+                    if (wtDir != null) {
+                        Sandbox.setThreadRoot(wtDir);
+                    }
+                    ToolResult result;
+                    try {
+                        result = dispatcher.dispatch(call);
+                    } finally {
+                        if (wtDir != null) {
+                            Sandbox.clearThreadRoot();
+                        }
+                    }
                     String resultText = result.isSuccess()
                             ? (result.getOutput() == null || result.getOutput().isBlank()
                                 ? "执行成功（无输出）。" : result.getOutput())
@@ -307,9 +341,18 @@ public final class Teammate implements Runnable {
             if (autoClaim && taskStore != null) {
                 Task claimed = taskStore.scanAndClaimOne(name);
                 if (claimed != null) {
+                    // s18：若任务绑定了 worktree，告知队友其工具 cwd 已切到该副本（相对路径落点）
+                    String wtNote = "";
+                    if (claimed.getWorktree() != null && !claimed.getWorktree().isBlank()) {
+                        Path wtDir = currentWorktreeDir();
+                        if (wtDir != null) {
+                            wtNote = "\n工作目录(worktree): " + wtDir
+                                    + " —— 本任务内你的 read/write/edit/glob/bash 相对路径都在此隔离副本下解析。";
+                        }
+                    }
                     history.add(new ChatMessage("user",
                             "<auto-claimed>Task #" + claimed.getId() + " " + safe(claimed.getSubject())
-                                    + "\n" + safe(claimed.getDescription()) + "</auto-claimed>"));
+                                    + "\n" + safe(claimed.getDescription()) + wtNote + "</auto-claimed>"));
                     observe("auto-claimed task #" + claimed.getId() + " " + safe(claimed.getSubject()));
                     return IdleResult.WORK;
                 }
@@ -377,5 +420,21 @@ public final class Teammate implements Runnable {
 
     private String safe(String s) {
         return s == null ? "" : s;
+    }
+
+    /**
+     * 推导本队友当前应使用的工具工作根（s18 worktree 隔离）：查任务板上本队友 in_progress 且绑定了
+     * worktree 的任务，命中则返回 {@code <repoRoot>/<baseDir>/<wt>}，否则返回 null（=仓库根，不隔离）。
+     * 每轮派发工具前实时推导——无长驻可变状态，天然免疫历史裁剪/阶段切换/auto-claim 与手动认领的差异。
+     */
+    private Path currentWorktreeDir() {
+        if (worktreeBaseDir == null || taskStore == null) {
+            return null;
+        }
+        String wt = taskStore.findActiveWorktreeFor(name);
+        if (wt == null) {
+            return null;
+        }
+        return Sandbox.repoRoot().resolve(worktreeBaseDir).resolve(wt).normalize();
     }
 }

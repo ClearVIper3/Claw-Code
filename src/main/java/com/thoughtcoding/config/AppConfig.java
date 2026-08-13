@@ -41,6 +41,9 @@ public class AppConfig {
     @JsonProperty("team")
     private TeamConfig team = new TeamConfig(); // Agent Teams（后台队友）系统配置
 
+    @JsonProperty("worktree")
+    private WorktreeConfig worktree = new WorktreeConfig(); // 工作树(git worktree)隔离配置
+
 
     // Getters and Setters
     public Map<String, ModelConfig> getModels() {
@@ -123,6 +126,17 @@ public class AppConfig {
 
     public void setTeam(TeamConfig team) {
         this.team = team;
+    }
+
+    public WorktreeConfig getWorktree() {
+        if (worktree == null) {
+            worktree = new WorktreeConfig();
+        }
+        return worktree;
+    }
+
+    public void setWorktree(WorktreeConfig worktree) {
+        this.worktree = worktree;
     }
 
 
@@ -622,6 +636,36 @@ public class AppConfig {
 
         public void setIdlePollIntervalMs(long idlePollIntervalMs) {
             this.idlePollIntervalMs = idlePollIntervalMs;
+        }
+    }
+
+    /**
+     * 工作树(git worktree)隔离配置（s18）——Lead 侧 create/remove/keep_worktree 工具 + 队友认领绑定
+     * worktree 任务时把工具 cwd 切到该副本的总开关。默认 <b>enabled=true</b>（对齐 team/task/cron）；
+     * 启动时探测 git 不可用则不注册工具，优雅降级。非 LLM 驱动——工具在 ThoughtCodingContext 按本配置注册。
+     */
+    @Data
+    public static class WorktreeConfig {
+        @JsonProperty("enabled")
+        private boolean enabled = true; // 总开关：装配 worktree 系统（3 个 Lead 工具 + 队友 cwd 隔离）
+
+        @JsonProperty("baseDir")
+        private String baseDir = ".worktrees"; // worktree 根目录（相对仓库根），形如 <baseDir>/<name>
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public String getBaseDir() {
+            return baseDir;
+        }
+
+        public void setBaseDir(String baseDir) {
+            this.baseDir = baseDir;
         }
     }
 }

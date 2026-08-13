@@ -648,7 +648,10 @@ public class ContextManager {
         sb.append("## 工作环境\n");
         sb.append("工作目录: ").append(cwd == null ? "" : cwd).append("\n");
         sb.append("路径支持：相对路径、绝对路径、~ 用户主目录、.. 上级目录。\n");
-        sb.append("操作系统: ").append(System.getProperty("os.name")).append("\n\n");
+        sb.append("操作系统: ").append(System.getProperty("os.name")).append("\n");
+        sb.append("worktree 隔离：若你认领的任务绑定了 git worktree（任务信息里会给出其路径），"
+                + "你的 read/write/edit/glob/bash 相对路径会在该 worktree 副本内解析——"
+                + "在副本里改动即可，不要去动仓库根；未绑定 worktree 的任务才在上面这个工作目录下操作。\n\n");
 
         sb.append("## 规则\n");
         sb.append("1. 需要操作时直接调用系统提供的工具（其名称/说明/参数已由系统注入），不要把工具名写进普通文本，也不要编造工具结果。\n");

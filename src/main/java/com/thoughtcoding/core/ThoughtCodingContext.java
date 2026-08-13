@@ -42,6 +42,10 @@ import com.thoughtcoding.team.tools.SubmitPlanTool;
 import com.thoughtcoding.tool.tools.SkillTool;
 import com.thoughtcoding.tool.tools.WriteTool;
 import com.thoughtcoding.ui.ThoughtCodingUI;
+import com.thoughtcoding.worktree.GitWorktreeManager;
+import com.thoughtcoding.worktree.tools.CreateWorktreeTool;
+import com.thoughtcoding.worktree.tools.KeepWorktreeTool;
+import com.thoughtcoding.worktree.tools.RemoveWorktreeTool;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -165,6 +169,23 @@ public class ThoughtCodingContext {
             }
         }
 
+        // ── 工作树(git worktree)系统（s18 Worktree Isolation）：worktree.enabled=false 或 git 不可用
+        //    或任务系统关闭则整体为 null（不注册工具，优雅降级）。仅构造管理器；工具在 build 后随
+        //    团队工具一同注册（需要 taskStore 绑定 + 仅 lead 可用）。
+        AppConfig.WorktreeConfig worktreeCfg = appConfig.getWorktree();
+        GitWorktreeManager worktreeManager = null;
+        if (worktreeCfg != null && worktreeCfg.isEnabled() && taskStore != null) {
+            try {
+                if (GitWorktreeManager.gitAvailable()) {
+                    worktreeManager = new GitWorktreeManager(
+                            java.nio.file.Paths.get(System.getProperty("user.dir")),
+                            worktreeCfg.getBaseDir());
+                }
+            } catch (Exception e) {
+                worktreeManager = null;
+            }
+        }
+
         // ── 定时任务(cron)系统（确定性调度 + 落盘 .scheduled_tasks.json，无 LLM 层）：
         //    cron.enabled=false 或初始化失败则整体为 null。轮询线程在此启动（生产者），
         //    消费者守护线程在 REPL 交互模式启动（见 ThoughtCodingCommand）。
@@ -265,6 +286,14 @@ public class ThoughtCodingContext {
             context.getToolRegistry().register(new RequestPlanTool(context));
             context.getToolRegistry().register(new ReviewPlanTool(context));
             context.getToolRegistry().register(new SubmitPlanTool(context));
+
+            // ── worktree 隔离（s18）Lead 侧工具：仅当功能开启+git 可用+任务系统在线时注册。
+            //    已从队友可见规格中过滤（Teammate.TEAMMATE_EXCLUDED_TOOLS），仅 lead 可用。
+            if (worktreeManager != null) {
+                context.getToolRegistry().register(new CreateWorktreeTool(worktreeManager, taskStore));
+                context.getToolRegistry().register(new RemoveWorktreeTool(worktreeManager));
+                context.getToolRegistry().register(new KeepWorktreeTool(worktreeManager));
+            }
         }
 
         return context;

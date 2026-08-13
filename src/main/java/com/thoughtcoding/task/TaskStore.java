@@ -96,14 +96,14 @@ public final class TaskStore {
      * blockedBy 中缺失的依赖不校验——依赖校验只发生在 claim 时。
      */
     public synchronized Task create(String subject, String description, List<String> blockedBy) {
-        Task t = new Task(nextId(), subject, description, "pending", null, blockedBy);
+        Task t = new Task(nextId(), subject, description, "pending", null, normIds(blockedBy));
         persist(t);
         tasks.put(t.getId(), t);
         return t;
     }
 
     public synchronized Task get(String id) {
-        return tasks.get(id);
+        return tasks.get(normId(id));
     }
 
     public synchronized List<Task> list() {
@@ -118,6 +118,7 @@ public final class TaskStore {
      */
     public synchronized Task update(String id, String subject, String description, String owner,
                        List<String> addBlockedBy, List<String> addBlocks, String status) {
+        id = normId(id);
         Task t = tasks.get(id);
         if (t == null) {
             return null;
@@ -140,6 +141,7 @@ public final class TaskStore {
         }
         if (addBlockedBy != null && !addBlockedBy.isEmpty()) {
             for (String dep : addBlockedBy) {
+                dep = normId(dep);
                 if (!t.getBlockedBy().contains(dep)) {
                     t.getBlockedBy().add(dep);
                 }
@@ -147,7 +149,7 @@ public final class TaskStore {
         }
         if (addBlocks != null && !addBlocks.isEmpty()) {
             for (String targetId : addBlocks) {
-                Task target = tasks.get(targetId);
+                Task target = tasks.get(normId(targetId));
                 if (target != null && !target.getBlockedBy().contains(id)) {
                     target.getBlockedBy().add(id);
                     persist(target);
@@ -159,6 +161,7 @@ public final class TaskStore {
     }
 
     public synchronized boolean delete(String id) {
+        id = normId(id);
         try {
             Files.deleteIfExists(dir.resolve(id + ".json"));
         } catch (IOException ignored) {
@@ -207,6 +210,7 @@ public final class TaskStore {
      * 被阻塞或状态非 pending 返回 null（调用方转错误文本）。
      */
     public synchronized Task claim(String id, String owner) {
+        id = normId(id);
         Task t = tasks.get(id);
         if (t == null || !"pending".equals(t.getStatus()) || !canStart(id)) {
             return null;
@@ -222,6 +226,7 @@ public final class TaskStore {
      * 异常状态修正请走 {@link #update} 的 status 逃生通道。
      */
     public synchronized Task complete(String id) {
+        id = normId(id);
         Task t = tasks.get(id);
         if (t == null || !"in_progress".equals(t.getStatus())) {
             return null;
@@ -232,10 +237,45 @@ public final class TaskStore {
     }
 
     /**
+     * 绑定/解绑任务的 worktree（s18）：仅写字段并落盘，不改状态（对齐参考设计 bind_task_to_worktree）。
+     * id 不存在返回 null。
+     */
+    public synchronized Task bindWorktree(String id, String worktreeName) {
+        id = normId(id);
+        Task t = tasks.get(id);
+        if (t == null) {
+            return null;
+        }
+        t.setWorktree(worktreeName);
+        persist(t);
+        return t;
+    }
+
+    /**
+     * 查指定 owner 当前 in_progress 且绑定了 worktree 的任务名（s18 队友 cwd 判定）：
+     * 队友每轮派发工具前用它推导自己的工作根——无状态，天然免疫历史裁剪/阶段切换。
+     * 无则返回 null（→ 工具在仓库根执行）。
+     */
+    public synchronized String findActiveWorktreeFor(String owner) {
+        if (owner == null) {
+            return null;
+        }
+        for (Task t : tasks.values()) {
+            if ("in_progress".equals(t.getStatus())
+                    && owner.equals(t.getOwner())
+                    && t.getWorktree() != null && !t.getWorktree().isBlank()) {
+                return t.getWorktree();
+            }
+        }
+        return null;
+    }
+
+    /**
      * 依赖检查（s12 canStart）：blockedBy 中任一 id 不存在（缺失依赖）或状态≠completed → false；
      * 空 blockedBy → true。
      */
     public synchronized boolean canStart(String id) {
+        id = normId(id);
         Task t = tasks.get(id);
         if (t == null) {
             return false;
@@ -251,6 +291,7 @@ public final class TaskStore {
 
     /** 缺失/未完成的依赖 id 列表（供错误提示）。 */
     public synchronized List<String> missingDependencies(String id) {
+        id = normId(id);
         Task t = tasks.get(id);
         List<String> missing = new ArrayList<>();
         if (t == null) {
@@ -336,6 +377,9 @@ public final class TaskStore {
             sb.append(icon(t.getStatus())).append(" #").append(t.getId()).append(' ').append(t.getSubject());
             if (t.getOwner() != null) {
                 sb.append("  @").append(t.getOwner());
+            }
+            if (t.getWorktree() != null && !t.getWorktree().isBlank()) {
+                sb.append("  [wt:").append(t.getWorktree()).append(']');
             }
             if (blocked) {
                 sb.append("  (blocked by ").append(String.join(", ", missingDependencies(t.getId()))).append(')');
@@ -439,5 +483,30 @@ public final class TaskStore {
             case "in_progress" -> "▸";
             default -> "○";
         };
+    }
+
+    /**
+     * 归一化外部传入的任务 id：剥掉一个前导 {@code '#'} 并 trim。
+     * 模型常照抄工具输出里的 {@code #1} 形式（render/成功文案都带 # 前缀），而落盘的 id 是纯数字
+     * ——在各入口统一归一，避免 "#1" 查不到 "1"。内部 id 不含 #，归一是幂等的。
+     */
+    private static String normId(String id) {
+        if (id == null) {
+            return null;
+        }
+        String s = id.trim();
+        return s.startsWith("#") ? s.substring(1).trim() : s;
+    }
+
+    /** 批量归一化依赖 id 列表（剥 # 前缀）；null 输入原样返回 null。 */
+    private static List<String> normIds(List<String> ids) {
+        if (ids == null) {
+            return null;
+        }
+        List<String> out = new ArrayList<>(ids.size());
+        for (String s : ids) {
+            out.add(normId(s));
+        }
+        return out;
     }
 }

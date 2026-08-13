@@ -3,6 +3,7 @@ package com.thoughtcoding.tool.tools;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.thoughtcoding.config.AppConfig;
 import com.thoughtcoding.model.ToolResult;
+import com.thoughtcoding.security.Sandbox;
 import com.thoughtcoding.tool.BaseTool;
 import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
 
@@ -76,7 +77,9 @@ public class BashTool extends BaseTool {
             } else {
                 pb = new ProcessBuilder("sh", "-c", command);
             }
-            pb.directory(new java.io.File(System.getProperty("user.dir")));
+            // cwd 用当前线程的有效根：队友认领到 worktree 任务时落在该 worktree 副本内
+            //（currentRoot 在派发线程上读取；run_in_background 仅 lead 走主线程，无跨线程泄漏）。
+            pb.directory(Sandbox.currentRoot().toFile());
             pb.redirectErrorStream(true);
 
             Process process = pb.start();

@@ -29,5 +29,8 @@ transcripts/
 # 定时任务（cron 用户数据，不提交）
 .scheduled_tasks.json
 
+# worktree 隔离（s18）：各 worktree 副本是完整检出，含自身分支，不提交
+.worktrees/
+
 # 本地配置（不提交）
 config.yaml

@@ -35,8 +35,23 @@ public class GlobTool extends BaseTool {
     /** 为性能跳过的大型/虚拟目录 */
     private static final Set<String> SKIP_DIRS = Set.of("node_modules", ".git", ".svn", ".hg");
 
+    /** worktree 根目录叶名（s18）：lead 在仓库根 glob 时不深入各 worktree 副本，避免返回外部副本的重复文件。 */
+    private final String worktreeBaseLeaf;
+
     public GlobTool(AppConfig appConfig) {
         super("glob", "按文件名模式查找文件（如 **/*.java），结果按最后修改时间倒序。参数：pattern（必填）、path（可选，起始目录，默认当前目录）。");
+        String leaf = null;
+        try {
+            String base = (appConfig != null && appConfig.getWorktree() != null)
+                    ? appConfig.getWorktree().getBaseDir() : null;
+            if (base != null && !base.isBlank()) {
+                // 取叶名（如 ".worktrees" 或 "a/b/worktrees" 的末段），与 walkFileTree 的 dir.getFileName 比对
+                leaf = Path.of(base.trim()).getFileName().toString();
+            }
+        } catch (Exception ignored) {
+            leaf = null;
+        }
+        this.worktreeBaseLeaf = leaf;
     }
 
     @Override
@@ -81,7 +96,8 @@ public class GlobTool extends BaseTool {
                         public FileVisitResult preVisitDirectory(Path dir,
                                 BasicFileAttributes attrs) {
                             Path name = dir.getFileName();
-                            if (name != null && SKIP_DIRS.contains(name.toString())) {
+                            if (name != null && (SKIP_DIRS.contains(name.toString())
+                                    || (worktreeBaseLeaf != null && name.toString().equals(worktreeBaseLeaf)))) {
                                 return FileVisitResult.SKIP_SUBTREE;
                             }
                             return FileVisitResult.CONTINUE;
