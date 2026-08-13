@@ -19,6 +19,21 @@ public class MCPService {
     private final Map<String, BaseTool> mcpTools = new ConcurrentHashMap<>(); // 改为 BaseTool
     private final Map<String, MCPClient> clients = new ConcurrentHashMap<>();
 
+    // 🔥 MCP 工具命名空间：借鉴 s19 命名规则，对外暴露 mcp__{server}__{tool}，
+    // 避免跨 server 撞名、以及与内置工具（read/write/edit...）撞名相互覆盖。
+    private static final java.util.regex.Pattern MCP_DISALLOWED =
+            java.util.regex.Pattern.compile("[^a-zA-Z0-9_-]");
+
+    /** 归一化 server / tool 名，只保留 [a-zA-Z0-9_-]。 */
+    static String normalizeMcpName(String name) {
+        return MCP_DISALLOWED.matcher(name == null ? "" : name).replaceAll("_");
+    }
+
+    /** 拼装对模型暴露的命名空间工具名：mcp__{server}__{tool}。 */
+    static String mcpToolName(String serverName, String toolName) {
+        return "mcp__" + normalizeMcpName(serverName) + "__" + normalizeMcpName(toolName);
+    }
+
 
     // 🔥 新增3参数方法
     public List<BaseTool> connectToServer(String serverName, String command, List<String> args) {
@@ -47,9 +62,9 @@ public class MCPService {
                 List<MCPTool> mcpToolList = client.getAvailableTools();
                 List<BaseTool> baseTools = convertToBaseTools(mcpToolList, serverName);
 
-                // 🔥 保存工具到 mcpTools 映射
+                // 🔥 保存工具到 mcpTools 映射（用命名空间前缀名做 key，与模型看到的一致）
                 for (int i = 0; i < mcpToolList.size(); i++) {
-                    String toolKey = mcpToolList.get(i).getName(); // 使用工具名称作为key
+                    String toolKey = baseTools.get(i).getName(); // 前缀名 mcp__{server}__{tool}
                     mcpTools.put(toolKey, baseTools.get(i));
                 }
 
@@ -68,7 +83,9 @@ public class MCPService {
     private List<BaseTool> convertToBaseTools(List<MCPTool> mcpTools, String serverName) {
         List<BaseTool> baseTools = new ArrayList<>();
         for (MCPTool mcpTool : mcpTools) {
-            BaseTool baseTool = new BaseTool(mcpTool.getName(), mcpTool.getDescription()) {
+            // 🔥 对外暴露命名空间前缀名，但闭包内仍用原始 serverName + 原始 tool 名派发
+            String exposedName = mcpToolName(serverName, mcpTool.getName());
+            BaseTool baseTool = new BaseTool(exposedName, mcpTool.getDescription()) {
                 @Override
                 public ToolResult execute(String input) {
                     try {
