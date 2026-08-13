@@ -19,8 +19,13 @@ public class MCPTool {
     @JsonProperty("inputSchema")
     private Object inputSchema;
 
+    /** 可选注解（readOnlyHint/destructiveHint…），tools/list 提供时由 Jackson 自动解析。 */
+    @JsonProperty("annotations")
+    private MCPToolAnnotations annotations;
+
     // 手动添加 getter 方法（如果 Lombok 不工作）
     public String getName() { return name; }
     public String getDescription() { return description; }
     public Object getInputSchema() { return inputSchema; }
+    public MCPToolAnnotations getAnnotations() { return annotations; }
 }

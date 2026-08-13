@@ -293,6 +293,16 @@ public class AgentLoop {
         return call.getToolName();
     }
 
+    /** 只读工具在完成行追加一个标记（纯展示，不影响审批）。查不到工具或异常则不加标记。 */
+    private String readOnlyMarker(ToolCall call) {
+        try {
+            var tool = context.getToolRegistry().getTool(call.getToolName());
+            return (tool != null && tool.isReadOnly()) ? "  🔒 只读" : "";
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
     /** 从 skill 工具的调用参数中提取技能名（name），用于展示实际加载的技能。 */
     private String extractSkillName(ToolCall toolCall) {
         if (!"skill".equals(toolCall.getToolName()) || toolCall.getParameters() == null) {
@@ -318,7 +328,7 @@ public class AgentLoop {
             return;
         }
         if (result.isSuccess()) {
-            context.getUi().displaySuccess("✅ 完成: " + describeTool(call));
+            context.getUi().displaySuccess("✅ 完成: " + describeTool(call) + readOnlyMarker(call));
             // 只读工具（read/glob/skill）的返回只需回喂模型，不在用户端 dump——
             // 否则 skill 正文、整份文件内容会刷屏。仿 Claude Code 的做法。
             if (QUIET_OUTPUT_TOOLS.contains(call.getToolName())) {

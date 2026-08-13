@@ -36,6 +36,11 @@ public class SkillTool extends BaseTool {
     }
 
     @Override
+    public boolean isReadOnly() {
+        return true;
+    }
+
+    @Override
     public JsonObjectSchema inputSchema() {
         return JsonObjectSchema.builder()
                 .addEnumProperty("name", registry.names(), "要加载的技能名称（须为系统提示技能目录中列出的名称之一）")

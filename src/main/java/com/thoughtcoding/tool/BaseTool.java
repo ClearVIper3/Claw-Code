@@ -45,6 +45,23 @@ public abstract class BaseTool {
         return null;
     }
 
+    /**
+     * 是否只读工具（默认 false）。对齐 Claude Code 的 Tool 契约：内置只读工具（read/glob/skill…）
+     * override 为 true；MCP 工具由 {@code tools/list} 的 annotations.readOnlyHint 填充。
+     * <p>当前仅作元数据（供展示/日后并发调度用），<b>不参与审批决策</b>——审批仍走 PermissionGate。
+     */
+    public boolean isReadOnly() {
+        return false;
+    }
+
+    /**
+     * 是否可能产生不可逆副作用（删除/覆盖/发送，默认 false）。
+     * MCP 工具由 annotations.destructiveHint 填充。同样仅作元数据。
+     */
+    public boolean isDestructive() {
+        return false;
+    }
+
     protected ToolResult success(String output) {
         return ToolResult.success(output, 0);
     }

@@ -28,6 +28,11 @@ public class TaskGetTool extends BaseTool {
     }
 
     @Override
+    public boolean isReadOnly() {
+        return true;
+    }
+
+    @Override
     public JsonObjectSchema inputSchema() {
         return JsonObjectSchema.builder()
                 .addStringProperty("id", "任务 id")

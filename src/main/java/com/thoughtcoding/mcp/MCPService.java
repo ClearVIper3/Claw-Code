@@ -102,6 +102,19 @@ public class MCPService {
                 public Object getInputSchema() {
                     return mcpTool.getInputSchema();
                 }
+
+                // 🔥 只读/副作用标识：映射 MCP 协议 annotations（仅作元数据，不参与审批）
+                @Override
+                public boolean isReadOnly() {
+                    var a = mcpTool.getAnnotations();
+                    return a != null && Boolean.TRUE.equals(a.getReadOnlyHint());
+                }
+
+                @Override
+                public boolean isDestructive() {
+                    var a = mcpTool.getAnnotations();
+                    return a != null && Boolean.TRUE.equals(a.getDestructiveHint());
+                }
             };
             baseTools.add(baseTool);
         }

@@ -22,6 +22,11 @@ public class TaskListTool extends BaseTool {
     }
 
     @Override
+    public boolean isReadOnly() {
+        return true;
+    }
+
+    @Override
     public JsonObjectSchema inputSchema() {
         return JsonObjectSchema.builder().additionalProperties(false).build();
     }

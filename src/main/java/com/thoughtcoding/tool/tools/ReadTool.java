@@ -28,6 +28,11 @@ public class ReadTool extends BaseTool {
     }
 
     @Override
+    public boolean isReadOnly() {
+        return true;
+    }
+
+    @Override
     public JsonObjectSchema inputSchema() {
         return JsonObjectSchema.builder()
                 .addStringProperty("path", "要读取的文件路径")

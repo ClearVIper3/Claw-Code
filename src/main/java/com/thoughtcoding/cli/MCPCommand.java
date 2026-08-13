@@ -110,9 +110,11 @@ public class MCPCommand implements Runnable {
             System.out.println("没有可用的MCP工具");
         } else {
             System.out.println("可用的MCP工具 (" + tools.size() + " 个):");
-            tools.forEach((name, tool) ->
-                    System.out.printf("  - %s: %s%n", name, tool.getDescription())
-            );
+            tools.forEach((name, tool) -> {
+                String mark = tool.isReadOnly() ? " [只读]"
+                        : (tool.isDestructive() ? " [破坏性]" : "");
+                System.out.printf("  - %s%s: %s%n", name, mark, tool.getDescription());
+            });
         }
     }
 

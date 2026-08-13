@@ -55,6 +55,11 @@ public class GlobTool extends BaseTool {
     }
 
     @Override
+    public boolean isReadOnly() {
+        return true;
+    }
+
+    @Override
     public JsonObjectSchema inputSchema() {
         return JsonObjectSchema.builder()
                 .addStringProperty("pattern", "文件名匹配模式，如 **/*.java")
