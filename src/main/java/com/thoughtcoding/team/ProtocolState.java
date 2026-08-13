@@ -7,7 +7,7 @@ package com.thoughtcoding.team;
  * 对齐：{@link TeamManager} 用 {@code ConcurrentHashMap<requestId, ProtocolState>} 持有<b>在途</b>请求，
  * 收到匹配的 {@code *_response} 后经 {@link TeamManager#matchResponse} 流转终态。
  *
- * <p>type 与 status 采用 {@code String} 常量而非 enum：协议消息类型经由 {@link TeamMessage#type}
+ * <p>type 与 status 采用 {@code String} 常量而非 enum：协议消息类型经由 {@link TeamMessage #type}
  * （本就是自由 String）在总线上传输，用 String 免去每次收发的 enum⇄String 映射，且混合新旧
  * {@code .jsonl} 天然可解析（对齐 {@link MessageBus#LEAD} 这种集中常量的既有风格）。
  *
