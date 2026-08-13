@@ -197,7 +197,7 @@ public class ThoughtCodingContext {
         if (teamCfg != null && teamCfg.isEnabled()) {
             try {
                 teamManager = new TeamManager(teamCfg.getMaxTeammates(), teamCfg.getMaxRounds(),
-                        teamCfg.getIdleTimeoutSeconds());
+                        teamCfg.getIdleTimeoutSeconds(), teamCfg.isAutoClaim(), teamCfg.getIdlePollIntervalMs());
             } catch (Exception e) {
                 System.err.println("❌ 团队系统初始化失败: " + e.getMessage());
                 e.printStackTrace();

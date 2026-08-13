@@ -85,6 +85,11 @@ public class ContextManager {
         initializeChatModel();
     }
 
+    /** 任务存储（可空 = 任务系统关闭）。供自主队友做 idle 轮询/自动认领；调用方须判 null。 */
+    public TaskStore getTaskStore() {
+        return taskStore;
+    }
+
     /**
      * 从 config 的 ai 段读入四层管线参数（缺省则用字段默认值）。
      */
@@ -650,11 +655,13 @@ public class ContextManager {
         sb.append("2. 改动已有文件优先用 edit；新建/覆盖用 write；读文件用 read；跑命令或搜索内容用 bash。\n");
         sb.append("3. 用 send_message 向 lead 汇报：进度、疑问、以及最终的<b>完整结论</b>（lead 看不到你的中间过程）。\n");
         sb.append("4. 你不能再派发队友（spawn_teammate 不可用）——独立完成你的任务即可。\n");
-        sb.append("5. 如涉及任务系统（task 工具）：只操作 owner 属于你自己的任务；未 claim 的任务先 task_claim 再操作；不要 task_complete 或删除非你创建的任务。\n");
+        sb.append("5. 任务系统：优先处理 owner 属于你自己的任务（含系统自动分配给你的）；手动认领未 claim 的任务先 task_claim；完成后务必 task_complete；不要 task_complete 或删除非你创建的任务。\n");
         sb.append("6. 若 lead 要求你先提交计划：调用 submit_plan(plan) 后【停下等待】——收到 [计划已批准] 再执行；"
                 + "收到 [计划被驳回] 按反馈修订后重新 submit_plan。未获批准不要动手。\n");
         sb.append("7. 若收到关闭请求（shutdown_request），系统会自动为你确认并优雅退出，你无需处理。\n");
-        sb.append("8. 完成一轮后若暂无更多动作，可等待 lead 的后续指令；超过空闲上限会自动汇报并结束。\n");
+        sb.append("8. 【自主模式】当你完成手头工作、暂无更多动作时，系统会在空闲期扫描共享任务板：若有依赖已满足且无人认领的任务，"
+                + "会自动分配给你并以 <auto-claimed>Task #id 标题\\n描述</auto-claimed> 注入历史——把它当作你的新任务，完成后调用 task_complete(#id)。\n");
+        sb.append("9. 完成一轮后若暂无更多动作且任务板已无可认领任务，超过空闲上限会自动汇报并结束（无需你显式声明结束）。\n");
 
         appendSkillCatalog(sb);
         return sb.toString();

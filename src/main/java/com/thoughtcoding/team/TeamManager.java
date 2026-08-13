@@ -23,6 +23,8 @@ public final class TeamManager {
     private final int maxTeammates;
     private final int maxRounds;
     private final int idleTimeoutSeconds;
+    private final boolean autoClaim;         // s17 自主模式：idle 期间自动认领任务板就绪任务
+    private final long idlePollIntervalMs;   // idle 轮询节拍(ms)
 
     /** s16 在途协议请求：requestId → 状态机。⚠️ 仅在内存，绝不落盘。 */
     private final ConcurrentHashMap<String, ProtocolState> pendingRequests = new ConcurrentHashMap<>();
@@ -30,11 +32,14 @@ public final class TeamManager {
 
     private ThoughtCodingContext context;
 
-    public TeamManager(int maxTeammates, int maxRounds, int idleTimeoutSeconds) {
+    public TeamManager(int maxTeammates, int maxRounds, int idleTimeoutSeconds,
+                       boolean autoClaim, long idlePollIntervalMs) {
         this.bus = new MessageBus();   // 构造即 ensure .mailboxes/ 存在
         this.maxTeammates = maxTeammates;
         this.maxRounds = maxRounds;
         this.idleTimeoutSeconds = idleTimeoutSeconds;
+        this.autoClaim = autoClaim;
+        this.idlePollIntervalMs = idlePollIntervalMs;
     }
 
     public void setContext(ThoughtCodingContext context) {
@@ -57,7 +62,8 @@ public final class TeamManager {
             return "已达团队上限(" + maxTeammates + ")，无法再 spawn。";
         }
         String uniq = uniqueName(name);
-        Teammate t = new Teammate(context, bus, uniq, role, prompt, maxRounds, idleTimeoutSeconds);
+        Teammate t = new Teammate(context, bus, uniq, role, prompt, maxRounds, idleTimeoutSeconds,
+                autoClaim, idlePollIntervalMs);
         Thread th = new Thread(t, "teammate-" + uniq);
         th.setDaemon(true);   // 守护线程，JVM 退出不阻塞（对齐 bg-task-worker）
         TeammateHandle handle = new TeammateHandle(uniq, role, th, t);

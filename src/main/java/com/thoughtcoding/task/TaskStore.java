@@ -31,6 +31,10 @@ import java.util.regex.Pattern;
  * 与 memory 不同，本类<b>不做任何 LLM 调用</b>——纯确定性 CRUD，无需 recall/remember/dream 那层。
  * 依赖语义（s12）：{@code canStart} 要求 blockedBy 全部 completed；缺失依赖视为阻塞。
  * 任何文件操作失败都降级、不抛（对齐 MemoryStore 的容错风格）。
+ *
+ * <p><b>并发（s17 自主队友）：</b>Lead 与多个后台队友线程共享同一实例，写方法/复合读一律
+ * {@code synchronized}，单一 monitor 既保证 find-then-claim 原子（{@link #scanAndClaimOne}），
+ * 又保留 {@code LinkedHashMap} 的插入序（"写入序即展示序"）。队友约 1s 轮询一次，竞争可忽略。
  */
 public final class TaskStore {
 
@@ -91,18 +95,18 @@ public final class TaskStore {
      * 创建一个新任务：分配下一个短序列 id，status=pending，owner=null，落盘后返回。
      * blockedBy 中缺失的依赖不校验——依赖校验只发生在 claim 时。
      */
-    public Task create(String subject, String description, List<String> blockedBy) {
+    public synchronized Task create(String subject, String description, List<String> blockedBy) {
         Task t = new Task(nextId(), subject, description, "pending", null, blockedBy);
         persist(t);
         tasks.put(t.getId(), t);
         return t;
     }
 
-    public Task get(String id) {
+    public synchronized Task get(String id) {
         return tasks.get(id);
     }
 
-    public List<Task> list() {
+    public synchronized List<Task> list() {
         return List.copyOf(tasks.values());
     }
 
@@ -112,7 +116,7 @@ public final class TaskStore {
      * <p>status=deleted → 删除任务；addBlockedBy 追加依赖边；addBlocks 给目标任务反向加边
      * （把本任务 id 追加到目标任务的 blockedBy）。其余可选字段非 null 才更新。
      */
-    public Task update(String id, String subject, String description, String owner,
+    public synchronized Task update(String id, String subject, String description, String owner,
                        List<String> addBlockedBy, List<String> addBlocks, String status) {
         Task t = tasks.get(id);
         if (t == null) {
@@ -154,7 +158,7 @@ public final class TaskStore {
         return t;
     }
 
-    public boolean delete(String id) {
+    public synchronized boolean delete(String id) {
         try {
             Files.deleteIfExists(dir.resolve(id + ".json"));
         } catch (IOException ignored) {
@@ -167,7 +171,7 @@ public final class TaskStore {
      * 是否整图已完成：非空且全部任务 status 都是 completed。
      * 空库返回 false（避免对空图误触发清空）。
      */
-    public boolean allCompleted() {
+    public synchronized boolean allCompleted() {
         if (tasks.isEmpty()) {
             return false;
         }
@@ -185,7 +189,7 @@ public final class TaskStore {
      * 让下游 {@link #canStart} 因"依赖缺失"而永久阻塞。任一删除失败静默忽略（内存已清即可用），
      * 对齐本类"文件操作失败都降级、不抛"的容错风格。
      */
-    public void clearAll() {
+    public synchronized void clearAll() {
         try (var stream = Files.list(dir)) {
             for (Path file : (Iterable<Path>) stream.filter(Files::isRegularFile).toList()) {
                 Files.deleteIfExists(file);
@@ -202,7 +206,7 @@ public final class TaskStore {
      * 认领任务：仅 pending 且 {@link #canStart}（依赖全完成）才可转为 in_progress 并设 owner。
      * 被阻塞或状态非 pending 返回 null（调用方转错误文本）。
      */
-    public Task claim(String id, String owner) {
+    public synchronized Task claim(String id, String owner) {
         Task t = tasks.get(id);
         if (t == null || !"pending".equals(t.getStatus()) || !canStart(id)) {
             return null;
@@ -217,7 +221,7 @@ public final class TaskStore {
      * 完成任务：仅 in_progress 可转 completed。返回完成的任务；否则 null。
      * 异常状态修正请走 {@link #update} 的 status 逃生通道。
      */
-    public Task complete(String id) {
+    public synchronized Task complete(String id) {
         Task t = tasks.get(id);
         if (t == null || !"in_progress".equals(t.getStatus())) {
             return null;
@@ -231,7 +235,7 @@ public final class TaskStore {
      * 依赖检查（s12 canStart）：blockedBy 中任一 id 不存在（缺失依赖）或状态≠completed → false；
      * 空 blockedBy → true。
      */
-    public boolean canStart(String id) {
+    public synchronized boolean canStart(String id) {
         Task t = tasks.get(id);
         if (t == null) {
             return false;
@@ -246,7 +250,7 @@ public final class TaskStore {
     }
 
     /** 缺失/未完成的依赖 id 列表（供错误提示）。 */
-    public List<String> missingDependencies(String id) {
+    public synchronized List<String> missingDependencies(String id) {
         Task t = tasks.get(id);
         List<String> missing = new ArrayList<>();
         if (t == null) {
@@ -264,7 +268,7 @@ public final class TaskStore {
     }
 
     /** 完成任务后变为可开始的下游任务（供 complete 工具报告"解锁了 X, Y"）。 */
-    public List<Task> unlockedBy(String completedId) {
+    public synchronized List<Task> unlockedBy(String completedId) {
         List<Task> unlocked = new ArrayList<>();
         for (Task t : tasks.values()) {
             if ("pending".equals(t.getStatus())
@@ -276,6 +280,40 @@ public final class TaskStore {
         return unlocked;
     }
 
+    /**
+     * 可认领任务扫描（s17 {@code scan_unclaimed_tasks}）：pending 且 owner==null 且依赖全完成。
+     * 返回展示序快照副本，空则空列表。供自主队友 idle 期间"找活"。
+     */
+    public synchronized List<Task> scanUnclaimed() {
+        List<Task> ready = new ArrayList<>();
+        for (Task t : tasks.values()) {
+            if ("pending".equals(t.getStatus()) && t.getOwner() == null && canStart(t.getId())) {
+                ready.add(t);
+            }
+        }
+        return ready;
+    }
+
+    /**
+     * 原子"找一个可认领任务并认领它"（s17 auto-claim 核心原语）：单临界区内取
+     * first(pending && owner==null && canStart) 并置 owner + in_progress，防止两个队友并发
+     * 认领到同一任务。成功返回该任务；无则 null。插入序遍历 ⇒ 先创建的可认领任务先被领走（FIFO 公平）。
+     */
+    public synchronized Task scanAndClaimOne(String owner) {
+        if (owner == null || owner.isBlank()) {
+            return null;
+        }
+        for (Task t : tasks.values()) {
+            if ("pending".equals(t.getStatus()) && t.getOwner() == null && canStart(t.getId())) {
+                t.setOwner(owner);
+                t.setStatus("in_progress");
+                persist(t);        // 落盘失败降级不抛（与既有 claim 一致）
+                return t;
+            }
+        }
+        return null;
+    }
+
     // ── 渲染 ──
 
     /**
@@ -283,7 +321,7 @@ public final class TaskStore {
      * 新增：被阻塞的 pending 任务前加 ⛔，附 #id、@owner、被阻塞原因。
      * 空库返回"暂无任务"而非空串（避免 displayNativeToolResult 判空吞掉反馈）。
      */
-    public String render() {
+    public synchronized String render() {
         long done = tasks.values().stream()
                 .filter(t -> "completed".equals(t.getStatus()))
                 .count();
@@ -311,7 +349,7 @@ public final class TaskStore {
      * 紧凑摘要（供注入 system prompt）：仅未完成任务（pending/in_progress），无 description，
      * 截断到 max 条并附"还有 N 个"。无未完成任务返回 null。
      */
-    public String summarizeOpen(int max) {
+    public synchronized String summarizeOpen(int max) {
         List<Task> open = new ArrayList<>();
         for (Task t : tasks.values()) {
             if ("completed".equals(t.getStatus())) {
@@ -340,11 +378,11 @@ public final class TaskStore {
         return sb.toString().stripTrailing();
     }
 
-    public boolean isEmpty() {
+    public synchronized boolean isEmpty() {
         return tasks.isEmpty();
     }
 
-    public int size() {
+    public synchronized int size() {
         return tasks.size();
     }
 

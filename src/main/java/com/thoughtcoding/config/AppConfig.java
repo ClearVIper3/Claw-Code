@@ -570,6 +570,12 @@ public class AppConfig {
         @JsonProperty("idleTimeoutSeconds")
         private int idleTimeoutSeconds = 60; // 队友在自然停顿点空转等待后续消息/协议回复的上限秒（不占用 maxRounds）
 
+        @JsonProperty("autoClaim")
+        private boolean autoClaim = true; // 自主模式（s17）：idle 期间自动认领任务板上「pending+无owner+依赖已完成」的就绪任务
+
+        @JsonProperty("idlePollIntervalMs")
+        private long idlePollIntervalMs = 1000; // idle 轮询节拍(ms)：轮询邮箱+任务板
+
         public boolean isEnabled() {
             return enabled;
         }
@@ -600,6 +606,22 @@ public class AppConfig {
 
         public void setIdleTimeoutSeconds(int idleTimeoutSeconds) {
             this.idleTimeoutSeconds = idleTimeoutSeconds;
+        }
+
+        public boolean isAutoClaim() {
+            return autoClaim;
+        }
+
+        public void setAutoClaim(boolean autoClaim) {
+            this.autoClaim = autoClaim;
+        }
+
+        public long getIdlePollIntervalMs() {
+            return idlePollIntervalMs;
+        }
+
+        public void setIdlePollIntervalMs(long idlePollIntervalMs) {
+            this.idlePollIntervalMs = idlePollIntervalMs;
         }
     }
 }
