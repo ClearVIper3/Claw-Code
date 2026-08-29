@@ -1,6 +1,7 @@
 package com.thoughtcoding.cli;
 
 import com.thoughtcoding.core.AgentLoop;
+import com.thoughtcoding.core.AgentTurnRunner;
 import com.thoughtcoding.core.DirectCommandExecutor;
 import com.thoughtcoding.core.ThoughtCodingContext;
 import com.thoughtcoding.model.ChatMessage;
@@ -249,6 +250,9 @@ public class ThoughtCodingCommand implements Callable<Integer> {
     private Integer startInteractiveMode(AgentLoop agentLoop, ThoughtCodingUI ui) {
         ui.displayInfo("Entering interactive mode. Type 'exit' to quit, 'help' for commands.");
 
+        // 回合后台化：agent 在虚拟线程上跑，主线程保持可输入（stop 可中断）
+        AgentTurnRunner runner = new AgentTurnRunner(agentLoop, context);
+
         while (true) {
             try {
                 // 🔥 在读取输入前输出一个换行，确保 thought> 提示符在新的一行
@@ -263,10 +267,24 @@ public class ThoughtCodingCommand implements Callable<Integer> {
 
                 String trimmedInput = input.trim();
 
+                // ── 输入路由：agent 线程的工具确认框正在等待输入 → 优先投递给它 ──
+                com.thoughtcoding.core.ConsoleInputRouter router = context.getConsoleInputRouter();
+                if (router != null && router.hasPending()) {
+                    if (trimmedInput.equalsIgnoreCase("stop") || trimmedInput.equalsIgnoreCase("停止")) {
+                        // stop 在确认等待期间：拒绝确认（投递 2）并取消整个回合
+                        router.deliverLine("2");
+                        cancelCurrentTurn(runner, ui);
+                    } else {
+                        router.deliverLine(trimmedInput);
+                    }
+                    continue;
+                }
+
                 // 退出命令
                 if (trimmedInput.equalsIgnoreCase("exit") || trimmedInput.equalsIgnoreCase("quit")) {
-                    // 设置UI回调
                     ui.displayInfo("Goodbye!");
+                    runner.shutdown();                       // 取消运行中的回合
+                    context.getSubAgentExecutor().shutdown(); // 取消后台子代理
                     break;
                 }
 
@@ -282,9 +300,15 @@ public class ThoughtCodingCommand implements Callable<Integer> {
                     continue;
                 }
 
-                // 🛑 停止生成命令
+                // 🛑 停止生成命令：取消当前回合（流式提前结束、bash 被 kill、子代理中断）
                 if (trimmedInput.equalsIgnoreCase("stop") || trimmedInput.equalsIgnoreCase("停止")) {
-                    stopCurrentGeneration();
+                    cancelCurrentTurn(runner, ui);
+                    continue;
+                }
+
+                // 回合运行中：其余操作要求先 stop（它们会改动共享服务/会话状态）
+                if (runner.isRunning()) {
+                    ui.displayWarning("⚠️  任务执行中，输入 stop 可中断后再操作");
                     continue;
                 }
 
@@ -313,8 +337,8 @@ public class ThoughtCodingCommand implements Callable<Integer> {
                     continue;
                 }
 
-                // 处理普通对话
-                agentLoop.processInput(trimmedInput);
+                // 处理普通对话：提交为后台回合（立即返回，可继续输入 stop 中断）
+                runner.submit(trimmedInput);
 
             } catch (Exception e) {
                 ui.displayError("Error: " + e.getMessage());
@@ -322,6 +346,17 @@ public class ThoughtCodingCommand implements Callable<Integer> {
         }
 
         return 0;
+    }
+
+    /**
+     * 取消当前 agent 回合：先触发回合 CancelToken（跨层传播），
+     * 再走 LangChainService 的共享生成状态兜底。
+     */
+    private void cancelCurrentTurn(AgentTurnRunner runner, ThoughtCodingUI ui) {
+        if (runner.cancelCurrent()) {
+            ui.displayWarning("⏸️  正在取消当前任务...");
+        }
+        stopCurrentGeneration();
     }
 
 // 删除 handleInternalCommand 方法，因为我们已经直接处理了 MCP 命令

@@ -22,6 +22,9 @@
 - **预定义工具** - 内置常用 MCP 工具快捷方式，一键连接
 - **技能系统** - 内置 6 个技能（docx/pdf/pptx/xlsx/mcp-builder/skill-creator），模型可按需加载 `SKILL.md` 完整说明
 - **子代理** - `subAgent` 工具派发隔离的子 Agent 执行独立子任务，仅回传最终结论
+- **并行子代理** - 基于 Java 21 虚拟线程（Loom）+ Semaphore 限流的 SubAgent 并发调度：同一批多个 subAgent 调用并行执行；`background: true` 时后台运行、结论自动注入下一轮对话
+- **任务中断** - 协作式取消令牌（CancelToken）跨层传播：agent 回合后台化，生成期间输入 `stop` 即可中断——流式提前结束、bash 子进程被 kill、子代理逐轮检查退出，且保证工具调用/结果 id 配对不被破坏
+- **并发安全确认** - 并行子代理的权限确认框经全局锁串行化排队，终端输入由主线程统一路由（ConsoleInputRouter），多代理并发不打架
 - **统一权限管道** - `PermissionGate` 收敛写/执行类工具的执行决策，越界只读操作弹确认，危险命令硬拒绝
 - **配置管理** - 灵活的 YAML 配置文件系统，支持 MCP 服务器动态配置
 - **类型安全** - 完整的 Java 类型定义和封装
@@ -426,6 +429,7 @@ defaultModel: deepseek-chat
 ai:
   autoProcessToolResults: true  # true=工具结果自动回喂模型，形成 agentic 多轮循环
   maxToolIterations: 10         # 单次用户输入内的最大工具轮次上限
+  maxConcurrentSubagents: 3     # 并行子代理上限（虚拟线程 + Semaphore 限流）
   # —— 四层上下文压缩管线（顺序：L3落盘 → L1裁中段 → L2旧结果占位 → L4摘要）——
   maxContextTokens: 48000       # L4：估算 token 超过则 LLM 摘要旧历史（DeepSeek ~64K 窗口留余量）
   maxMessages: 50               # L1：消息条数超过则裁中段（保留头尾）
@@ -479,6 +483,7 @@ mcp:
 - `ai` : AI 行为配置
   - `autoProcessToolResults`: 工具结果是否自动回喂模型继续对话
   - `maxToolIterations`: 单次用户输入内最大工具调用轮次
+  - `maxConcurrentSubagents`: 并行子代理上限（默认 3）
   - `maxContextTokens` / `maxMessages` / `snipKeepHead` / `snipKeepTail` / `keepRecentToolResults` / `perResultPersistBytes` / `l4KeepTail`: 四层压缩管线参数
   - `maxToolResultBytes`: L3 当轮工具结果聚合预算（**注：运行时会覆写为 `maxContextTokens / 2`，配置此值当前不生效**）
 
@@ -504,7 +509,7 @@ mcp:
 
 ### 安装要求
 
-- Java 17 或更高版本
+- Java 21 或更高版本（虚拟线程）
 - Maven 3.6+
 - 至少 2GB 可用内存
 - Node.js 环境 16.0+
@@ -835,7 +840,7 @@ SessionData session = new SessionData("session-id", "标题", "model");
 
 ## 🛠️ 技术栈
 
-- **语言**: Java 17+
+- **语言**: Java 21+（虚拟线程 / Loom）
 - **构建工具**: Maven
 - **AI 框架**: LangChain4j（原生 Function Calling）
 - **MCP 支持**: Model Context Protocol 客户端（JSON-RPC over stdio）

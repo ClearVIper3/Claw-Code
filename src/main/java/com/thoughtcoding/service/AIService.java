@@ -37,4 +37,25 @@ public interface AIService {
                                              Consumer<String> tokenSink) {
         throw new UnsupportedOperationException("chatOnceForSubagent not supported by this AIService");
     }
+
+    /**
+     * 同 {@link #chatOnceForSubagent(String, List, Consumer)}，但支持协作式取消：
+     * token 触发时停止消费流式 token 并立即返回「被取消」的兜底结论（同样永不抛出）。
+     * token 为 null 等价于不可取消。
+     */
+    default SubagentTurn chatOnceForSubagent(String systemPrompt, List<ChatMessage> history,
+                                             Consumer<String> tokenSink,
+                                             com.thoughtcoding.core.CancelToken token) {
+        return chatOnceForSubagent(systemPrompt, history, tokenSink);
+    }
+
+    /**
+     * 带取消令牌的流式对话：token 触发时提前结束等待（底层 HTTP 流由 SDK 自然收尾），
+     * 已生成的部分文本仍会进 history。token 为 null 等价于不可取消。
+     */
+    default List<ChatMessage> streamingChat(String input, List<ChatMessage> history,
+                                            String modelName,
+                                            com.thoughtcoding.core.CancelToken token) {
+        return streamingChat(input, history, modelName);
+    }
 }

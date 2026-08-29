@@ -49,14 +49,22 @@ public class SubAgentTool extends BaseTool {
                 .addStringProperty("prompt",
                         "交给子Agent的详细任务指令。必须自包含——子Agent看不到主对话，"
                         + "请把背景、目标、约束、期望的结论形式都写清楚。")
+                .addBooleanProperty("background",
+                        "是否后台运行（默认 false）。true 时立即返回，子Agent在后台独立运行，"
+                        + "结论将在完成后自动注入下一轮对话——适合不需要立刻用上结论的独立任务。")
                 .required("description", "prompt")
                 .additionalProperties(false)
                 .build();
     }
 
     @Override
-    @SuppressWarnings("unchecked")
     public ToolResult execute(String input) {
+        return execute(input, null);
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public ToolResult execute(String input, com.thoughtcoding.core.CancelToken token) {
         long startTime = System.currentTimeMillis();
         try {
             Map<String, Object> params = MAPPER.readValue(input, Map.class);
@@ -75,11 +83,28 @@ public class SubAgentTool extends BaseTool {
                         System.currentTimeMillis() - startTime);
             }
 
-            String conclusion = new SubAgent(context).run(prompt, description);
+            boolean background = Boolean.TRUE.equals(params.get("background"));
+
+            if (background) {
+                // 后台模式：任务用【自己的】token（跨回合存活，不随本回合取消），
+                // 由 SubAgentExecutor 统一管理生命周期与结论注入。
+                com.thoughtcoding.core.SubAgentExecutor.BackgroundTask task =
+                        context.getSubAgentExecutor().startBackground(description,
+                                taskToken -> new SubAgent(context).run(prompt, description, taskToken));
+                return success("子Agent任务已启动（id: " + task.id() + "，标签: " + description
+                                + "），正在后台独立运行。完成后结论会自动注入下一轮对话，无需等待。"
+                                + "可继续处理其他任务。",
+                        System.currentTimeMillis() - startTime);
+            }
+
+            // 前台模式：阻塞至子代理得出结论。批内并行由 AgentLoop 通过 SubAgentExecutor 编排。
+            String conclusion = new SubAgent(context).run(prompt, description, token);
             return success(
                     conclusion == null || conclusion.isBlank()
                             ? "子Agent已结束，但未产出文本结论。" : conclusion,
                     System.currentTimeMillis() - startTime);
+        } catch (com.thoughtcoding.core.CancelledException e) {
+            return error("子Agent已被用户取消", System.currentTimeMillis() - startTime);
         } catch (Exception e) {
             // 兜底：ToolDispatcher.dispatch 不做 try/catch，异常绝不能从这里逃逸破坏主轮次的工具配对
             return error("subAgent 执行失败: " + e.getMessage(), System.currentTimeMillis() - startTime);

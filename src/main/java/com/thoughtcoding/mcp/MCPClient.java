@@ -8,6 +8,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.*;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
@@ -22,6 +25,7 @@ public class MCPClient {
     private BufferedReader reader;
     private BufferedWriter writer;
     private final Map<String, MCPTool> availableTools = new ConcurrentHashMap<>();
+    private final Deque<String> recentErrorOutput = new ArrayDeque<>();
     private boolean initialized = false;
     private final String serverName;
 
@@ -34,6 +38,7 @@ public class MCPClient {
             // 分割完整命令为命令和参数，并去除引号
             String[] parts = fullCommand.split("\\s+");
             String command = parts[0].replace("\"", "");  // 去除引号
+            command = resolveExecutable(command);
 
             List<String> commandList = new ArrayList<>();
             commandList.add(command);
@@ -95,6 +100,60 @@ public class MCPClient {
     }
 
     /**
+     * ProcessBuilder 在 Windows 上不会像 PowerShell/cmd 一样可靠地为命令补全 .cmd。
+     * npm/npx 的 Windows 启动器恰好是 .cmd，因此在启动子进程前按 PATH/PATHEXT
+     * 解析一次，同时保留 Linux/macOS 的原有行为。
+     */
+    static String resolveExecutable(String command) {
+        if (!System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win")) {
+            return command;
+        }
+
+        Path commandPath = Paths.get(command);
+        String fileName = commandPath.getFileName().toString();
+        if (fileName.contains(".")) {
+            return command;
+        }
+
+        String pathEnv = System.getenv("PATH");
+        if (pathEnv == null || pathEnv.isBlank()) {
+            return command;
+        }
+
+        String pathExtEnv = System.getenv("PATHEXT");
+        String[] extensions = (pathExtEnv == null || pathExtEnv.isBlank()
+                ? ".COM;.EXE;.BAT;.CMD"
+                : pathExtEnv).split(";");
+
+        List<Path> searchDirectories = new ArrayList<>();
+        Path parent = commandPath.getParent();
+        if (parent != null) {
+            searchDirectories.add(parent);
+        } else {
+            for (String directory : pathEnv.split(java.util.regex.Pattern.quote(File.pathSeparator))) {
+                if (!directory.isBlank()) {
+                    searchDirectories.add(Paths.get(directory.replace("\"", "")));
+                }
+            }
+        }
+
+        for (Path directory : searchDirectories) {
+            for (String extension : extensions) {
+                Path candidate = directory.resolve(fileName + extension.toLowerCase(Locale.ROOT));
+                if (Files.isRegularFile(candidate)) {
+                    return candidate.toAbsolutePath().normalize().toString();
+                }
+                candidate = directory.resolve(fileName + extension.toUpperCase(Locale.ROOT));
+                if (Files.isRegularFile(candidate)) {
+                    return candidate.toAbsolutePath().normalize().toString();
+                }
+            }
+        }
+
+        return command;
+    }
+
+    /**
      * 🔥 只监控错误流，避免和主输入流冲突
      */
     private void startErrorMonitoring() {
@@ -103,15 +162,15 @@ public class MCPClient {
                     new InputStreamReader(process.getErrorStream()))) {
                 String line;
                 while ((line = errorReader.readLine()) != null) {
-                    // 过滤 npm 无关的错误
-                    if (line.contains("npm ERR!") || line.contains("npm WARN") ||
-                            line.contains("node_cache") || line.contains("_cacache") ||
-                            line.contains("EPERM") || line.contains("operation not permitted")) {
-                        continue;
+                    if (!line.isBlank()) {
+                        synchronized (recentErrorOutput) {
+                            if (recentErrorOutput.size() >= 20) {
+                                recentErrorOutput.removeFirst();
+                            }
+                            recentErrorOutput.addLast(line);
+                        }
+                        log.debug("MCP server stderr [{}]: {}", serverName, line);
                     }
-
-                    // 🔥 移除 MCP stderr 日志，保持输出简洁
-                    // 不再输出 MCP 服务器的标准错误流信息
                 }
             } catch (Exception e) {
                 // 正常结束
@@ -249,6 +308,7 @@ public class MCPClient {
                 if (process != null && !process.isAlive()) {
                     int exitCode = process.exitValue();
                     log.error("❌ MCP进程已退出，退出码: {}", exitCode);
+                    logRecentErrorOutput();
                     throw new IOException("MCP进程异常退出");
                 }
 
@@ -290,6 +350,7 @@ public class MCPClient {
         // 超时
         long totalTime = System.currentTimeMillis() - startTime;
         log.error("❌ 读取响应超时！总等待时间: {}ms, 尝试次数: {}", totalTime, attemptCount);
+        logRecentErrorOutput();
 
         // 尝试最后一次读取
         try {
@@ -304,6 +365,16 @@ public class MCPClient {
         }
 
         throw new IOException("读取响应超时 (等待了 " + totalTime + "ms)");
+    }
+
+    private void logRecentErrorOutput() {
+        String summary;
+        synchronized (recentErrorOutput) {
+            summary = String.join(System.lineSeparator(), recentErrorOutput);
+        }
+        if (!summary.isBlank()) {
+            log.error("MCP server stderr [{}]:{}{}", serverName, System.lineSeparator(), summary);
+        }
     }
 
     public void disconnect() {

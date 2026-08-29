@@ -13,6 +13,7 @@ import com.thoughtcoding.tool.ToolDispatcher;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -45,7 +46,9 @@ public class AgentLoop {
 
         this.confirmation = new ToolExecutionConfirmation(
             context.getUi(),
-            context.getUi().getLineReader()
+            context.getUi().getLineReader(),
+            null,
+            context.getConsoleInputRouter()   // 回合后台化后：确认输入经路由器由主线程投递
         );
         this.toolDispatcher = new ToolDispatcher(context.getToolRegistry());
 
@@ -68,6 +71,16 @@ public class AgentLoop {
     }
 
     public void processInput(String input) {
+        processInput(input, new CancelToken());
+    }
+
+    /**
+     * 处理一次用户输入（一个 agent 回合）。
+     *
+     * @param input 用户输入
+     * @param token 本回合的取消令牌（由 AgentTurnRunner 创建；单次提问模式传入独立令牌）
+     */
+    public void processInput(String input, CancelToken token) {
         PerformanceMonitor monitor = context.getPerformanceMonitor();
         monitor.start();
 
@@ -77,17 +90,36 @@ public class AgentLoop {
             // ── Hook: UserPromptSubmit（进入 LLM 前）—— BLOCK 则跳过本轮 ──
             HookResult promptResult = hookRegistry.fire(
                     HookContext.forUserPrompt(context, history, input));
+            if (promptResult.isBlocked()) {
+                context.getUi().displayWarning(promptResult.message() != null
+                        ? promptResult.message() : "本轮输入已被 Hook 阻止。");
+                return;
+            }
+
+            // 后台子代理结论注入：在用户新输入之前插入，让模型先看到已完成任务的结论
+            injectCompletedBackgroundTasks();
 
             history.add(new ChatMessage("user", input));
 
             // 原生 function calling：多轮 agentic 循环
-            runNativeToolLoop();
+            runNativeToolLoop(token);
 
             context.getSessionService().saveSession(sessionId, history);
         } catch (Exception e) {
             context.getUi().displayError("Error processing input: " + e.getMessage());
         } finally {
             monitor.stop();
+        }
+    }
+
+    /** 把已完成的后台子代理结论作为 user 消息注入主历史（一次性 drain）。 */
+    private void injectCompletedBackgroundTasks() {
+        for (SubAgentExecutor.BackgroundTask t : context.getSubAgentExecutor().drainCompleted()) {
+            String conclusion = t.conclusion() == null || t.conclusion().isBlank()
+                    ? "（无结论）" : t.conclusion();
+            history.add(new ChatMessage("user",
+                    "[后台子Agent " + t.label() + "（" + t.id() + "）已完成，结论如下]\n" + conclusion));
+            context.getUi().displayInfo("📎 已注入后台子Agent结论: " + t.label());
         }
     }
 
@@ -104,8 +136,12 @@ public class AgentLoop {
 
     /**
      * 原生 function calling 的多轮 agentic 循环。
+     *
+     * <p>取消语义：token 触发后，本轮流式立即停止、已缓存但未执行的工具调用
+     * 补「用户已取消」配对结果，循环退出——保证 history 中的工具调用/结果
+     * 严格配对（违反会导致模型 400）。
      */
-    private void runNativeToolLoop() {
+    private void runNativeToolLoop(CancelToken token) {
         AppConfig.AIConfig ai = context.getAppConfig().getAi();
         int maxIter = ai != null ? ai.getMaxToolIterations() : 10;
         boolean auto = ai == null || ai.isAutoProcessToolResults();
@@ -114,10 +150,17 @@ public class AgentLoop {
         while (true) {
             pendingToolCalls.clear();
             // 一轮模型响应（无新用户输入；用户消息与历史已在 history 中）
-            context.getAiService().streamingChat(null, history, modelName);
+            context.getAiService().streamingChat(null, history, modelName, token);
             // 空一行，避免与后续工具确认/结果挤在一起
             context.getUi().getTerminal().writer().println();
             context.getUi().getTerminal().flush();
+
+            // 流式被中断：丢弃残余，为已缓存的调用补配对后退出
+            if (token.isCancelled()) {
+                fillCancelledResults(pendingToolCalls, 0, history);
+                context.getUi().displayWarning("⏸️  本轮任务已被用户中断。");
+                break;
+            }
 
             if (pendingToolCalls.isEmpty()) {
                 // ── Hook: Stop（循环即将退出）──
@@ -126,30 +169,43 @@ public class AgentLoop {
             }
 
             List<ToolCall> batch = new ArrayList<>(pendingToolCalls);
-            boolean stop = false;
 
-            for (ToolCall call : batch) {
-                if (stop) {
-                    // 用户已取消：为剩余工具补 declined 结果，保持 call/result 配对
-                    history.add(ChatMessage.toolResult(call.getProviderCallId(), call.getToolName(),
-                            "用户已取消后续工具执行。"));
-                    continue;
+            // ── 批内 subAgent 并行：≥2 个 subAgent 调用时预执行（虚拟线程），
+            //    其余工具保持串行。结果按调用实例暂存，下面按原顺序统一回喂。
+            Map<ToolCall, ToolResult> parallelResults = preExecuteSubAgents(batch, token);
+
+            boolean cancelled = false;
+
+            for (int i = 0; i < batch.size(); i++) {
+                ToolCall call = batch.get(i);
+
+                if (token.isCancelled()) {
+                    // 用户已取消：为剩余工具一次性补 declined 结果，保持 call/result 配对
+                    fillCancelledResults(batch, i, history);
+                    cancelled = true;
+                    break;
                 }
 
                 // ── Hook: PreToolUse（工具执行前）—— 权限检查 + 自定义动作 ──
                 // PermissionHook 已注册在此时机：DENY → BLOCK，WARN → 弹确认
-                HookResult preResult = hookRegistry.fire(
-                        HookContext.forPreTool(context, history, call));
-                if (preResult.isBlocked()) {
-                    String msg = preResult.message() != null ? preResult.message() : "工具执行被阻止。";
-                    context.getUi().displayError(msg);
-                    history.add(ChatMessage.toolResult(
-                        call.getProviderCallId(), call.getToolName(), msg));
-                    continue;
-                }
+                // （并行路径的 subAgent 已在 preExecuteSubAgents 内触发过 hook）
+                ToolResult result;
+                if (parallelResults.containsKey(call)) {
+                    result = parallelResults.get(call);
+                } else {
+                    HookResult preResult = hookRegistry.fire(
+                            HookContext.forPreTool(context, history, call));
+                    if (preResult.isBlocked()) {
+                        String msg = preResult.message() != null ? preResult.message() : "工具执行被阻止。";
+                        context.getUi().displayError(msg);
+                        history.add(ChatMessage.toolResult(
+                            call.getProviderCallId(), call.getToolName(), msg));
+                        continue;
+                    }
 
-                // 执行并把结果按 id 配对写回 history
-                ToolResult result = toolDispatcher.dispatch(call);
+                    // 执行并把结果按 id 配对写回 history
+                    result = toolDispatcher.dispatch(call, token);
+                }
 
                 // ── Hook: PostToolUse（工具执行后）──
                 hookRegistry.fire(HookContext.forPostTool(context, history, call, result));
@@ -164,8 +220,8 @@ public class AgentLoop {
                 history.add(ChatMessage.toolResult(call.getProviderCallId(), call.getToolName(), resultText));
             }
 
-            if (stop) {
-                break;      // 用户 DISCARD → 停止循环，交回用户
+            if (cancelled) {
+                break;      // 用户中断 → 停止循环，交回用户
             }
             if (!auto) {
                 break;      // 不自动回喂结果 → 执行一批后停止
@@ -176,6 +232,63 @@ public class AgentLoop {
                 context.getUi().displayWarning("⚠️  已达最大工具轮次(" + maxIter + ")，停止自动执行。");
                 break;
             }
+        }
+    }
+
+    /**
+     * 批内 subAgent 并行执行（≥2 个才值得并行；单个走原串行路径）。
+     *
+     * <p>每个任务在 SubAgentExecutor 的虚拟线程上跑（Semaphore 限流），
+     * PreToolUse hook 在任务内触发（subAgent 恒为 ALLOW，无确认弹窗冲突）。
+     * 任何异常都收敛为失败的 ToolResult，绝不逃逸。
+     *
+     * @return 调用实例 → 结果；串行路径（0/1 个 subAgent）返回空 Map
+     */
+    private Map<ToolCall, ToolResult> preExecuteSubAgents(List<ToolCall> batch, CancelToken token) {
+        List<ToolCall> subCalls = new ArrayList<>();
+        for (ToolCall c : batch) {
+            if ("subAgent".equals(c.getToolName())) {
+                subCalls.add(c);
+            }
+        }
+        Map<ToolCall, ToolResult> results = new java.util.IdentityHashMap<>();
+        if (subCalls.size() < 2) {
+            return results;
+        }
+
+        context.getUi().displayInfo("🚀 " + subCalls.size() + " 个子Agent并行执行中...");
+
+        List<java.util.concurrent.Future<ToolResult>> futures = new ArrayList<>();
+        for (ToolCall c : subCalls) {
+            futures.add(context.getSubAgentExecutor().submitForeground(() -> {
+                HookResult pre = hookRegistry.fire(HookContext.forPreTool(context, history, c));
+                if (pre.isBlocked()) {
+                    return ToolResult.error(pre.message() != null ? pre.message() : "工具执行被阻止。", 0);
+                }
+                return toolDispatcher.dispatch(c, token);
+            }));
+        }
+
+        for (int i = 0; i < subCalls.size(); i++) {
+            ToolCall c = subCalls.get(i);
+            try {
+                results.put(c, futures.get(i).get());
+            } catch (Exception e) {
+                results.put(c, ToolResult.error("子Agent执行异常: " + e.getMessage(), 0));
+            }
+        }
+        return results;
+    }
+
+    /**
+     * 为批内 [fromIndex, end) 的调用补「用户已取消」配对结果。
+     * 静态且无副作用依赖，便于单测直接验证配对不变量。
+     */
+    static void fillCancelledResults(List<ToolCall> batch, int fromIndex, List<ChatMessage> history) {
+        for (int i = fromIndex; i < batch.size(); i++) {
+            ToolCall call = batch.get(i);
+            history.add(ChatMessage.toolResult(call.getProviderCallId(), call.getToolName(),
+                    "用户已取消后续工具执行。"));
         }
     }
 

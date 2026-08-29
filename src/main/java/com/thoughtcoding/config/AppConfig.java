@@ -157,6 +157,7 @@ public class AppConfig {
         }
     }
 
+    @JsonIgnoreProperties(ignoreUnknown = true)
     @Data
     public static class ToolsConfig {
         @JsonProperty("bash")
@@ -290,6 +291,9 @@ public class AppConfig {
         @JsonProperty("maxToolIterations")
         private int maxToolIterations = 10; // agentic 循环单次用户输入内的最大工具轮次上限
 
+        @JsonProperty("maxConcurrentSubagents")
+        private int maxConcurrentSubagents = 3; // 并行子代理上限（虚拟线程 + Semaphore 限流，防模型 API 限流）
+
         // ── 四层上下文压缩管线参数（见 ContextManager）——全部有默认值，旧 config 不填也能跑 ──
         @JsonProperty("maxContextTokens")
         private int maxContextTokens = 48000; // L4：估算 token 超过则触发 LLM 摘要（DeepSeek ~64K 窗口留余量）
@@ -329,6 +333,14 @@ public class AppConfig {
 
         public void setMaxToolIterations(int maxToolIterations) {
             this.maxToolIterations = maxToolIterations;
+        }
+
+        public int getMaxConcurrentSubagents() {
+            return maxConcurrentSubagents;
+        }
+
+        public void setMaxConcurrentSubagents(int maxConcurrentSubagents) {
+            this.maxConcurrentSubagents = maxConcurrentSubagents;
         }
 
         public int getMaxContextTokens() {

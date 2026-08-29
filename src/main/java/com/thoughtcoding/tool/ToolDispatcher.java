@@ -23,9 +23,17 @@ public class ToolDispatcher {
     }
 
     /**
-     * 执行一个工具调用：查表 → 序列化参数 → 执行。
+     * 执行一个工具调用：查表 → 序列化参数 → 执行（无取消令牌，等价于不可取消）。
      */
     public ToolResult dispatch(ToolCall call) {
+        return dispatch(call, null);
+    }
+
+    /**
+     * 执行一个工具调用：查表 → 序列化参数 → 携带取消令牌执行。
+     * token 为 null 表示本调用不可取消。
+     */
+    public ToolResult dispatch(ToolCall call, com.thoughtcoding.core.CancelToken token) {
         long start = System.currentTimeMillis();
 
         BaseTool tool = registry.getTool(call.getToolName());
@@ -35,7 +43,7 @@ public class ToolDispatcher {
 
         String argsJson = toJson(call.getParameters());
 
-        return tool.execute(argsJson);
+        return tool.execute(argsJson, token);
     }
 
     /** 把参数 Map 序列化为 JSON 字符串（各工具的 execute(String) 统一按 JSON 解析）。 */

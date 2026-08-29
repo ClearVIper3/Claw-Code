@@ -71,6 +71,12 @@ public class LangChainService implements AIService {
 
     @Override
     public List<ChatMessage> streamingChat(String input, List<ChatMessage> history, String modelName) {
+        return streamingChat(input, history, modelName, null);
+    }
+
+    @Override
+    public List<ChatMessage> streamingChat(String input, List<ChatMessage> history, String modelName,
+                                           com.thoughtcoding.core.CancelToken token) {
         if (messageHandler == null) {
             throw new IllegalStateException("Message handler not set");
         }
@@ -83,6 +89,13 @@ public class LangChainService implements AIService {
 
         final StringBuilder fullResponse = new StringBuilder();
         final CompletableFuture<Void> completionFuture = new CompletableFuture<>();
+
+        // 取消传播：token 触发时提前完成 future，让下面的 get() 立即返回。
+        // 已知限制：langchain4j 不暴露底层 okhttp 调用的取消，HTTP 流由 SDK 自然收尾；
+        // 迟到的 onCompleteResponse 仍可能往 history 追加消息（无害，仅本轮不使用）。
+        if (token != null) {
+            token.onCancel(() -> completionFuture.complete(null));
+        }
 
         try {
             List<dev.langchain4j.data.message.ChatMessage> messages = prepareMessages(input, history);
@@ -224,6 +237,13 @@ public class LangChainService implements AIService {
     @Override
     public SubagentTurn chatOnceForSubagent(String systemPrompt, List<ChatMessage> history,
                                             java.util.function.Consumer<String> tokenSink) {
+        return chatOnceForSubagent(systemPrompt, history, tokenSink, null);
+    }
+
+    @Override
+    public SubagentTurn chatOnceForSubagent(String systemPrompt, List<ChatMessage> history,
+                                            java.util.function.Consumer<String> tokenSink,
+                                            com.thoughtcoding.core.CancelToken token) {
         if (streamingChatModel == null) {
             return new SubagentTurn("(子Agent不可用：模型未初始化)", java.util.Collections.emptyList());
         }
@@ -257,12 +277,19 @@ public class LangChainService implements AIService {
         dev.langchain4j.model.chat.request.ChatRequest request = reqBuilder.build();
 
         final CompletableFuture<SubagentTurn> future = new CompletableFuture<>();
+        // 取消传播：token 触发时取消等待；流式回调幂等补完（complete 已取消的 future 是 no-op）
+        if (token != null) {
+            token.onCancel(() -> future.cancel(false));
+        }
         streamingChatModel.chat(request, new StreamingChatResponseHandler() {
             @Override
-            public void onPartialResponse(String token) {
-                if (tokenSink != null && token != null) {
+            public void onPartialResponse(String partial) {
+                if (token != null && token.isCancelled()) {
+                    return; // 已取消：停止消费后续 token
+                }
+                if (tokenSink != null && partial != null) {
                     try {
-                        tokenSink.accept(token);
+                        tokenSink.accept(partial);
                     } catch (Exception ignored) {
                         // 显示回调异常不影响子Agent推进
                     }
@@ -295,6 +322,8 @@ public class LangChainService implements AIService {
         } catch (java.util.concurrent.TimeoutException e) {
             future.cancel(true);
             return new SubagentTurn("(子Agent调用超时)", java.util.Collections.emptyList());
+        } catch (java.util.concurrent.CancellationException e) {
+            return new SubagentTurn("(子Agent调用已被用户取消)", java.util.Collections.emptyList());
         } catch (Exception e) {
             Throwable cause = e.getCause() != null ? e.getCause() : e;
             return new SubagentTurn("(子Agent调用失败: " + cause.getMessage() + ")",

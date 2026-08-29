@@ -51,6 +51,12 @@ public class ThoughtCodingContext {
     // 🔥 新增上下文管理器
     private final ContextManager contextManager;
 
+    // 并行/后台子代理调度器（虚拟线程 + Semaphore 限流）
+    private final SubAgentExecutor subAgentExecutor;
+
+    // 终端输入路由器（回合后台化后 agent 线程确认框的输入来源；由 AgentTurnRunner 构造时注册）
+    private volatile ConsoleInputRouter consoleInputRouter;
+
     private ThoughtCodingContext(Builder builder) {
         this.appConfig = builder.appConfig;
         this.mcpConfig = builder.mcpConfig;
@@ -62,6 +68,7 @@ public class ThoughtCodingContext {
         this.mcpService = builder.mcpService;
         this.mcpToolManager = builder.mcpToolManager;
         this.contextManager = builder.contextManager;
+        this.subAgentExecutor = builder.subAgentExecutor;
     }
 
     public static ThoughtCodingContext initialize() {
@@ -130,6 +137,10 @@ public class ThoughtCodingContext {
         // UI层初始化
         ThoughtCodingUI ui = new ThoughtCodingUI();
 
+        // 并行/后台子代理调度器：虚拟线程 + Semaphore（上限读 ai.maxConcurrentSubagents）
+        SubAgentExecutor subAgentExecutor = new SubAgentExecutor(
+                appConfig.getAi().getMaxConcurrentSubagents(), ui);
+
         // 构建上下文（核心层初始化）
         ThoughtCodingContext context = new Builder()
                 .appConfig(appConfig)
@@ -142,6 +153,7 @@ public class ThoughtCodingContext {
                 .mcpService(mcpService)
                 .mcpToolManager(mcpToolManager)
                 .contextManager(contextManager)  // 🔥 添加 contextManager
+                .subAgentExecutor(subAgentExecutor)
                 .build();
 
         // 🔥 子Agent 工具（subAgent）：需持有已构建好的 context 引用来派生隔离子循环，故在 build 之后注册。
@@ -302,6 +314,9 @@ public class ThoughtCodingContext {
 
     // 🔥 新增 contextManager Getter
     public ContextManager getContextManager() { return contextManager; }
+    public SubAgentExecutor getSubAgentExecutor() { return subAgentExecutor; }
+    public ConsoleInputRouter getConsoleInputRouter() { return consoleInputRouter; }
+    public void setConsoleInputRouter(ConsoleInputRouter router) { this.consoleInputRouter = router; }
     public ThoughtCodingUI getUi() { return ui; }
     public PerformanceMonitor getPerformanceMonitor() { return performanceMonitor; }
 
@@ -329,6 +344,8 @@ public class ThoughtCodingContext {
         private MCPToolManager mcpToolManager;
         // 🔥 新增上下文管理器字段
         private ContextManager contextManager;
+        // 🔥 并行/后台子代理调度器
+        private SubAgentExecutor subAgentExecutor;
 
         public Builder appConfig(AppConfig appConfig) {
             this.appConfig = appConfig;
@@ -379,6 +396,12 @@ public class ThoughtCodingContext {
         // 🔥 新增 contextManager Builder 方法
         public Builder contextManager(ContextManager contextManager) {
             this.contextManager = contextManager;
+            return this;
+        }
+
+        // 🔥 子代理调度器 Builder 方法
+        public Builder subAgentExecutor(SubAgentExecutor subAgentExecutor) {
+            this.subAgentExecutor = subAgentExecutor;
             return this;
         }
 

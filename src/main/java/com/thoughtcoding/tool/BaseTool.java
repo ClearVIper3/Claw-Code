@@ -21,6 +21,15 @@ public abstract class BaseTool {
 
     public abstract ToolResult execute(String input);
 
+    /**
+     * 带取消令牌的执行入口（协作式取消传播）。
+     * 默认忽略 token、直接委托 {@link #execute(String)}——老工具零改动；
+     * 支持取消的工具（bash、subAgent 等）覆写本方法。
+     */
+    public ToolResult execute(String input, com.thoughtcoding.core.CancelToken token) {
+        return execute(input);
+    }
+
     public String getName() {
         return name;
     }

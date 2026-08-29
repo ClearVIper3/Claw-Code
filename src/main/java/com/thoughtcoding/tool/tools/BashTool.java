@@ -41,6 +41,11 @@ public class BashTool extends BaseTool {
     @Override
     @SuppressWarnings("unchecked")
     public ToolResult execute(String input) {
+        return execute(input, null);
+    }
+
+    @Override
+    public ToolResult execute(String input, com.thoughtcoding.core.CancelToken token) {
         long startTime = System.currentTimeMillis();
         try {
             ObjectMapper mapper = new ObjectMapper();
@@ -77,6 +82,14 @@ public class BashTool extends BaseTool {
 
             Process process = pb.start();
 
+            // 取消传播：token 触发时立即 kill 子进程（bash 进程不响应 Java 中断，必须 destroyForcibly）。
+            // 进程死后 waitFor 返回，reader 线程随流关闭自然结束。
+            if (token != null) {
+                token.onCancel(() -> {
+                    process.destroyForcibly();
+                });
+            }
+
             // 后台线程消费 stdout，避免主线程因 readLine 阻塞而无法触发超时
             StringBuilder output = new StringBuilder();
             Thread readerThread = new Thread(() -> {
@@ -93,6 +106,9 @@ public class BashTool extends BaseTool {
             readerThread.start();
 
             boolean finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
+            if (token != null && token.isCancelled()) {
+                return error("命令已被用户取消", System.currentTimeMillis() - startTime);
+            }
             if (!finished) {
                 process.destroyForcibly();
                 readerThread.interrupt();

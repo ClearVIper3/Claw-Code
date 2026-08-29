@@ -48,9 +48,10 @@ public class SubAgent {
      *
      * @param subAgentPrompt 交给SubAgent的详细任务指令（作为它的首条 user 消息）
      * @param label      简短标签，仅用于终端展示
+     * @param token      取消令牌（主回合 token 或后台任务私有 token），可为 null（不可取消）
      * @return SubAgent的最终结论文本（唯一回传给主Agent的内容）
      */
-    public String run(String subAgentPrompt, String label) {
+    public String run(String subAgentPrompt, String label, CancelToken token) {
         ThoughtCodingUI ui = context.getUi();
         ObjectMapper mapper = new ObjectMapper();
 
@@ -60,9 +61,10 @@ public class SubAgent {
         List<ChatMessage> subHistory = new ArrayList<>();
         subHistory.add(new ChatMessage("user", subAgentPrompt));
 
-        // SubAgent自己的权限栈（共享 UI；auto-approve 默认 false —— 更安全的方向）
+        // SubAgent自己的权限栈（共享 UI；auto-approve 默认 false —— 更安全的方向）。
+        // ownerLabel 让并发子代理的确认框能区分来源。
         ToolExecutionConfirmation confirmation =
-                new ToolExecutionConfirmation(ui, ui.getLineReader());
+                new ToolExecutionConfirmation(ui, ui.getLineReader(), "[SubAgent " + label + "]");
         HookRegistry hookRegistry = new HookRegistry();
         hookRegistry.register(HookType.PRE_TOOL_USE, new PermissionHook(confirmation));
         ToolDispatcher dispatcher = new ToolDispatcher(context.getToolRegistry());
@@ -74,17 +76,21 @@ public class SubAgent {
         String lastText = "";
 
         for (int iter = 0; iter < maxIter; iter++) {
+            if (token != null && token.isCancelled()) {
+                printLine(ui, "[SubAgent] 已被用户取消");
+                return "子Agent已被用户取消，未产出结论。";
+            }
             // 每轮首个 token 前打一个 [SubAgent] 前缀，其余 token 原样流式打印
             final boolean[] headerPrinted = {false};
             SubagentTurn turn = context.getAiService().chatOnceForSubagent(
                     subPrompt, subHistory,
-                    token -> {
+                    t -> {
                         if (!headerPrinted[0]) {
                             printRaw(ui, "\n[SubAgent] ");
                             headerPrinted[0] = true;
                         }
-                        printRaw(ui, token);
-                    });
+                        printRaw(ui, t);
+                    }, token);
             if (headerPrinted[0]) {
                 printRaw(ui, "\n");
                 flush(ui);
@@ -123,7 +129,7 @@ public class SubAgent {
 
                 // 执行 —— 任何异常都转成配对的 tool 结果，绝不逃逸破坏配对
                 try {
-                    ToolResult result = dispatcher.dispatch(call);
+                    ToolResult result = dispatcher.dispatch(call, token);
                     String resultText = result.isSuccess()
                             ? (result.getOutput() == null || result.getOutput().isBlank()
                                 ? "执行成功（无输出）。" : result.getOutput())
