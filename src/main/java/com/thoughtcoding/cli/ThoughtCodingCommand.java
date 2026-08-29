@@ -4,7 +4,9 @@ import com.thoughtcoding.core.AgentLoop;
 import com.thoughtcoding.core.AgentTurnRunner;
 import com.thoughtcoding.core.DirectCommandExecutor;
 import com.thoughtcoding.core.ThoughtCodingContext;
+import com.thoughtcoding.core.WorktreeManager;
 import com.thoughtcoding.model.ChatMessage;
+import com.thoughtcoding.security.Sandbox;
 import com.thoughtcoding.service.SessionService;
 import com.thoughtcoding.ui.ThoughtCodingUI;
 import com.thoughtcoding.config.MCPConfig;
@@ -92,6 +94,9 @@ public class ThoughtCodingCommand implements Callable<Integer> {
 
             // 显示欢迎信息
             ui.showBanner();
+
+            // 非破坏性巡检：只 prune 已丢失的 Git 注册并提示残留，不自动删除未合并成果。
+            auditSubAgentWorktrees(ui);
 
             // 🔥 显示 MCP 状态信息
             if (context.isMCPEnabled() || mcpTools != null || mcpConnect != null) {
@@ -324,6 +329,12 @@ public class ThoughtCodingCommand implements Callable<Integer> {
                     continue;
                 }
 
+                // SubAgent worktree 生命周期管理
+                if (trimmedInput.equals("/agents") || trimmedInput.startsWith("/agents ")) {
+                    handleAgentsCommand(trimmedInput);
+                    continue;
+                }
+
                 // 🚀 新增：检查是否是直接命令执行
                 //TODO ：优化正则检测，降低误判率
                 if (directCommandExecutor.shouldExecuteDirectly(trimmedInput)) {
@@ -357,6 +368,128 @@ public class ThoughtCodingCommand implements Callable<Integer> {
             ui.displayWarning("⏸️  正在取消当前任务...");
         }
         stopCurrentGeneration();
+    }
+
+    private void auditSubAgentWorktrees(ThoughtCodingUI ui) {
+        if (!context.getAppConfig().getAi().isSubagentWorktreeIsolation()) return;
+        try {
+            WorktreeManager manager = worktreeManager();
+            if (!manager.isGitRepository()) return;
+            WorktreeManager.AuditReport report = manager.audit();
+            if (report.needsAttention()) {
+                ui.displayWarning("⚠️  SubAgent Worktree 巡检：共 " + report.total()
+                        + " 个任务，需检查 " + report.attention()
+                        + " 个，已合并可清理 " + report.merged()
+                        + " 个，超过 7 天未合并 " + report.aged()
+                        + (report.imported() > 0 ? "，导入旧记录 " + report.imported() + " 个" : "")
+                        + "。使用 /agents list 查看。");
+            }
+        } catch (WorktreeManager.WorktreeException e) {
+            ui.displayWarning("⚠️  SubAgent Worktree 启动巡检失败: " + e.getMessage());
+        }
+    }
+
+    private void handleAgentsCommand(String command) {
+        ThoughtCodingUI ui = context.getUi();
+        String[] parts = command.trim().split("\\s+");
+        String action = parts.length < 2 ? "list" : parts[1].toLowerCase();
+        try {
+            if ("list".equals(action)) {
+                displayWorktreeTasks(worktreeManager().listTasks());
+                return;
+            }
+            if ("help".equals(action)) {
+                displayAgentsHelp();
+                return;
+            }
+            if (!"cleanup".equals(action)) {
+                ui.displayWarning("未知 /agents 子命令: " + action);
+                displayAgentsHelp();
+                return;
+            }
+
+            String taskId = null;
+            Integer olderThanDays = null;
+            boolean force = false;
+            for (int i = 2; i < parts.length; i++) {
+                String part = parts[i];
+                if ("--force".equalsIgnoreCase(part)) {
+                    force = true;
+                } else if (part.startsWith("--older-than=")) {
+                    olderThanDays = parseNonNegativeInt(part.substring("--older-than=".length()), "--older-than");
+                } else if ("--older-than".equalsIgnoreCase(part)) {
+                    if (++i >= parts.length) throw new IllegalArgumentException("--older-than 后需要天数");
+                    olderThanDays = parseNonNegativeInt(parts[i], "--older-than");
+                } else if (taskId == null) {
+                    taskId = part;
+                } else {
+                    throw new IllegalArgumentException("无法识别的参数: " + part);
+                }
+            }
+            if (force && (taskId == null || taskId.isBlank())) {
+                throw new IllegalArgumentException("--force 必须同时指定一个任务 id，拒绝批量强制删除");
+            }
+
+            WorktreeManager.CleanupReport report = worktreeManager().cleanup(
+                    new WorktreeManager.CleanupOptions(taskId, olderThanDays, force));
+            for (String message : report.messages()) {
+                if (message.startsWith("已清理")) ui.displaySuccess(message);
+                else ui.displayWarning(message);
+            }
+            ui.displayInfo("Worktree 清理完成：成功 " + report.cleaned()
+                    + "，跳过/失败 " + report.skipped());
+        } catch (Exception e) {
+            ui.displayError("/agents 执行失败: " + e.getMessage());
+        }
+    }
+
+    private void displayWorktreeTasks(List<WorktreeManager.TaskRecord> tasks) {
+        ThoughtCodingUI ui = context.getUi();
+        if (tasks.isEmpty()) {
+            ui.displayInfo("当前仓库没有待管理的 SubAgent Worktree 任务。");
+            return;
+        }
+        var writer = ui.getTerminal().writer();
+        writer.println("\nSubAgent Worktree 任务（" + tasks.size() + "）");
+        writer.println("────────────────────────────────────────");
+        for (WorktreeManager.TaskRecord task : tasks) {
+            writer.println(task.id() + "  [" + task.status() + "]  " + task.label());
+            writer.println("  创建: " + task.createdLocal() + "（" + task.ageDays() + " 天前）");
+            if (task.branch() != null) writer.println("  分支: " + task.branch());
+            if (task.commit() != null) writer.println("  提交: " + task.commit());
+            if (task.worktree() != null) writer.println("  目录: " + task.worktree());
+            if (task.note() != null && !task.note().isBlank()) writer.println("  状态: " + task.note());
+        }
+        writer.println("\n安全清理已合并项: /agents cleanup");
+        writer.println("查看命令说明: /agents help");
+        writer.flush();
+    }
+
+    private void displayAgentsHelp() {
+        context.getUi().displayInfo("""
+                SubAgent Worktree 命令：
+                  /agents list                         查看当前仓库的任务
+                  /agents cleanup                      清理已合并或无产物任务
+                  /agents cleanup <id>                 安全清理指定任务（支持唯一前缀）
+                  /agents cleanup --older-than 7       仅处理超过 7 天的安全项
+                  /agents cleanup <id> --force         强制删除未合并分支/worktree
+
+                注意：--force 会永久删除指定任务尚未合并的本地成果。
+                """);
+    }
+
+    private int parseNonNegativeInt(String value, String option) {
+        try {
+            int parsed = Integer.parseInt(value);
+            if (parsed < 0) throw new NumberFormatException();
+            return parsed;
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException(option + " 需要非负整数，实际为: " + value);
+        }
+    }
+
+    private WorktreeManager worktreeManager() {
+        return new WorktreeManager(Sandbox.baseWorkspaceRoot());
     }
 
 // 删除 handleInternalCommand 方法，因为我们已经直接处理了 MCP 命令
@@ -629,6 +762,11 @@ public class ThoughtCodingCommand implements Callable<Integer> {
                                                                   /mcp tools <t1,t2>    使用预定义工具
                                                                   /mcp disconnect <n>   断开MCP服务器
                                                                   /mcp predefined       显示预定义工具
+                                                               \s
+                                                                🌿 SubAgent Worktree：
+                                                                  /agents list           查看隔离任务和残留
+                                                                  /agents cleanup        安全清理已合并任务
+                                                                  /agents help           查看清理选项
                                                                \s
                                                                 ⚡ 快捷命令：
                                                                   -c, --continue       继续上次会话

@@ -48,7 +48,8 @@ public class ThoughtCodingUI {
             // 初始化行阅读器
             this.lineReader = LineReaderBuilder.builder()
                     .terminal(terminal) //关联终端
-                    .completer(new StringsCompleter("exit", "quit", "clear", "help", "new", "save", "list"))//命令补全
+                    .completer(new StringsCompleter("exit", "quit", "clear", "help", "stop",
+                            "/commands", "/mcp", "/agents", "/agents list", "/agents cleanup"))//命令补全
                     .build();//构建行阅读器
 
             // 初始化UI组件
@@ -57,7 +58,8 @@ public class ThoughtCodingUI {
             this.progressIndicator = new ProgressIndicator(terminal);//进度指示器
             this.inputHandler = new InputHandler(
                     terminal,
-                    new StringsCompleter("exit", "quit", "clear", "help", "new", "save", "list")
+                    new StringsCompleter("exit", "quit", "clear", "help", "stop",
+                            "/commands", "/mcp", "/agents", "/agents list", "/agents cleanup")
             );//输入处理器
 
         } catch (IOException e) {

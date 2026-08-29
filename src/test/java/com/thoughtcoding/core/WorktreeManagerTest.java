@@ -29,10 +29,12 @@ class WorktreeManagerTest {
     Path tempDir;
 
     private Path repository;
+    private Path stateRoot;
 
     @BeforeEach
     void setUp() throws Exception {
         repository = tempDir.resolve("repo");
+        stateRoot = tempDir.resolve("state");
         Files.createDirectories(repository);
         git(repository, "init", "--quiet");
         Files.writeString(repository.resolve("sample.txt"), "main\n", StandardCharsets.UTF_8);
@@ -46,7 +48,7 @@ class WorktreeManagerTest {
 
     @Test
     void 有改动时保存独立分支且不修改主工作区() {
-        WorktreeManager manager = new WorktreeManager(repository);
+        WorktreeManager manager = manager();
 
         WorktreeManager.RunResult result = manager.run("修改示例", () -> {
             assertNotEquals(repository.toRealPath(), Sandbox.workspaceRoot().toRealPath());
@@ -63,11 +65,14 @@ class WorktreeManagerTest {
                 result.outcome().branch() + ":new-file.txt").replace("\r\n", "\n"));
         assertTrue(result.combinedOutput().contains("git merge --no-ff"));
         assertTrue(git(repository, "status", "--porcelain").isBlank());
+        assertEquals(1, manager.listTasks().size());
+        assertTrue(manager.listTasks().get(0).worktree() == null,
+                "成功快照后只保留分支，不应残留 worktree 目录");
     }
 
     @Test
     void 无改动时自动清理临时分支() {
-        WorktreeManager manager = new WorktreeManager(repository);
+        WorktreeManager manager = manager();
 
         WorktreeManager.RunResult result = manager.run("只读检查", () -> {
             assertEquals("main\n", read(Sandbox.resolve("sample.txt")).replace("\r\n", "\n"));
@@ -84,7 +89,7 @@ class WorktreeManagerTest {
     @Test
     void 主工作区不干净时拒绝基于过期HEAD执行() throws Exception {
         Files.writeString(repository.resolve("sample.txt"), "uncommitted\n", StandardCharsets.UTF_8);
-        WorktreeManager manager = new WorktreeManager(repository);
+        WorktreeManager manager = manager();
 
         WorktreeManager.WorktreeException error = assertThrows(
                 WorktreeManager.WorktreeException.class,
@@ -97,7 +102,7 @@ class WorktreeManagerTest {
 
     @Test
     void 子代理自行提交后仍会保留分支而非误判无改动() throws Exception {
-        WorktreeManager manager = new WorktreeManager(repository);
+        WorktreeManager manager = manager();
 
         WorktreeManager.RunResult result = manager.run("自行提交", () -> {
             Files.writeString(Sandbox.resolve("sample.txt"), "committed-by-agent\n", StandardCharsets.UTF_8);
@@ -137,13 +142,124 @@ class WorktreeManagerTest {
         }
     }
 
+    @Test
+    void 未合并任务默认拒绝清理但force可显式删除() {
+        WorktreeManager manager = manager();
+        WorktreeManager.RunResult result = manager.run("待审查", () -> {
+            Files.writeString(Sandbox.resolve("review.txt"), "review\n", StandardCharsets.UTF_8);
+            return "完成";
+        });
+
+        WorktreeManager.CleanupReport safe = manager.cleanup(
+                new WorktreeManager.CleanupOptions(result.outcome().taskId(), null, false));
+        assertEquals(0, safe.cleaned());
+        assertEquals(1, safe.skipped());
+        assertFalse(git(repository, "branch", "--list", result.outcome().branch()).isBlank());
+
+        WorktreeManager.CleanupReport forced = manager.cleanup(
+                new WorktreeManager.CleanupOptions(result.outcome().taskId(), null, true));
+        assertEquals(1, forced.cleaned());
+        assertTrue(git(repository, "branch", "--list", result.outcome().branch()).isBlank());
+        assertTrue(manager.listTasks().isEmpty());
+    }
+
+    @Test
+    void force不允许在未指定任务时批量删除() {
+        WorktreeManager.WorktreeException error = assertThrows(
+                WorktreeManager.WorktreeException.class,
+                () -> manager().cleanup(new WorktreeManager.CleanupOptions(null, null, true)));
+        assertTrue(error.getMessage().contains("拒绝批量强制删除"));
+    }
+
+    @Test
+    void 分支合并后默认cleanup会安全回收() {
+        WorktreeManager manager = manager();
+        WorktreeManager.RunResult result = manager.run("可合并", () -> {
+            Files.writeString(Sandbox.resolve("merged.txt"), "merged\n", StandardCharsets.UTF_8);
+            return "完成";
+        });
+
+        git(repository, "merge", "--ff-only", result.outcome().branch());
+        List<WorktreeManager.TaskRecord> tasks = manager.listTasks();
+        assertEquals(WorktreeManager.TaskStatus.MERGED, tasks.get(0).status());
+
+        WorktreeManager.CleanupReport report = manager.cleanup(
+                new WorktreeManager.CleanupOptions(null, null, false));
+        assertEquals(1, report.cleaned());
+        assertTrue(git(repository, "branch", "--list", result.outcome().branch()).isBlank());
+        assertTrue(manager.listTasks().isEmpty());
+    }
+
+    @Test
+    void 启动巡检会导入旧版未登记的subagent分支() {
+        String branch = "thoughtcoding/subagent/legacy-task";
+        git(repository, "branch", branch, "HEAD");
+
+        WorktreeManager.AuditReport audit = manager().audit();
+
+        assertEquals(1, audit.imported());
+        List<WorktreeManager.TaskRecord> tasks = manager().listTasks();
+        assertEquals(1, tasks.size());
+        assertEquals("legacy-task", tasks.get(0).id());
+        assertEquals(WorktreeManager.TaskStatus.MERGED, tasks.get(0).status());
+    }
+
+    @Test
+    void 启动巡检会把上次未结束的running记录标为stale() throws Exception {
+        WorktreeManager manager = manager();
+        manager.run("模拟崩溃", () -> {
+            Files.writeString(Sandbox.resolve("crash.txt"), "crash\n", StandardCharsets.UTF_8);
+            return "完成";
+        });
+        Path index;
+        try (var files = Files.walk(stateRoot)) {
+            index = files.filter(path -> path.getFileName().toString().equals("tasks.json"))
+                    .findFirst().orElseThrow();
+        }
+        String json = Files.readString(index, StandardCharsets.UTF_8)
+                .replace("\"status\" : \"SAVED\"", "\"status\" : \"RUNNING\"");
+        Files.writeString(index, json, StandardCharsets.UTF_8);
+
+        WorktreeManager.AuditReport report = manager.audit();
+
+        assertEquals(1, report.attention());
+        assertEquals(WorktreeManager.TaskStatus.STALE, manager.listTasks().get(0).status());
+    }
+
+    @Test
+    void 启动巡检会提示超过七天仍未合并的分支() throws Exception {
+        WorktreeManager manager = manager();
+        manager.run("长期未合并", () -> {
+            Files.writeString(Sandbox.resolve("aged.txt"), "aged\n", StandardCharsets.UTF_8);
+            return "完成";
+        });
+        Path index;
+        try (var files = Files.walk(stateRoot)) {
+            index = files.filter(path -> path.getFileName().toString().equals("tasks.json"))
+                    .findFirst().orElseThrow();
+        }
+        String json = Files.readString(index, StandardCharsets.UTF_8)
+                .replaceFirst("\\\"createdAt\\\"\\s*:\\s*\\\"[^\\\"]+\\\"",
+                        "\\\"createdAt\\\" : \\\"2000-01-01T00:00:00Z\\\"");
+        Files.writeString(index, json, StandardCharsets.UTF_8);
+
+        WorktreeManager.AuditReport report = manager.audit();
+
+        assertEquals(1, report.aged());
+        assertTrue(report.needsAttention());
+    }
+
     private WorktreeManager.RunResult runParallelChange(String name, String content) {
-        return new WorktreeManager(repository).run(name, () -> {
+        return manager().run(name, () -> {
             Path activeWorkspace = Sandbox.workspaceRoot();
             assertNotEquals(repository.toRealPath(), activeWorkspace.toRealPath());
             Files.writeString(activeWorkspace.resolve(name), content, StandardCharsets.UTF_8);
             return name;
         });
+    }
+
+    private WorktreeManager manager() {
+        return new WorktreeManager(repository, stateRoot);
     }
 
     private static String read(Path path) {

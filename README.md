@@ -23,6 +23,7 @@
 - **技能系统** - 内置 6 个技能（docx/pdf/pptx/xlsx/mcp-builder/skill-creator），模型可按需加载 `SKILL.md` 完整说明
 - **子代理** - `subAgent` 工具派发隔离的子 Agent；默认在独立 Git worktree/本地分支中执行，改动不会直接写进主工作区
 - **并行子代理** - 基于 Java 21 虚拟线程（Loom）+ Semaphore 限流的 SubAgent 并发调度：同一批多个 subAgent 调用并行执行；`background: true` 时后台运行、结论自动注入下一轮对话
+- **Worktree 生命周期** - 持久化跟踪隔离任务，启动时巡检历史残留；通过 `/agents list/cleanup` 安全回收已合并分支，未合并成果默认保留
 - **任务中断** - 协作式取消令牌（CancelToken）跨层传播：agent 回合后台化，生成期间输入 `stop` 即可中断——流式提前结束、bash 子进程被 kill、子代理逐轮检查退出，且保证工具调用/结果 id 配对不被破坏
 - **并发安全确认** - 并行子代理的权限确认框经全局锁串行化排队，终端输入由主线程统一路由（ConsoleInputRouter），多代理并发不打架
 - **统一权限管道** - `PermissionGate` 收敛写/执行类工具的执行决策，越界只读操作弹确认，危险命令硬拒绝
@@ -52,6 +53,7 @@ ThoughtCoding/
 │   │   ├── AgentLoop.java               # Agent 循环引擎（原生 function calling）
 │   │   ├── SubAgent.java                # 子代理（隔离子任务）
 │   │   ├── WorktreeManager.java          # 子代理 Git worktree 创建、快照与安全清理
+│   │   ├── WorktreeRegistry.java         # 持久化任务索引与跨进程仓库锁
 │   │   ├── ProjectContext.java          # 项目上下文检测
 │   │   ├── ToolExecutionConfirmation.java # 工具执行确认（YES/NO 两选项）
 │   │   └── DirectCommandExecutor.java   # 直接命令执行器（/ 斜杠命令）
@@ -251,6 +253,27 @@ ThoughtCoding/
 - **结果处理**：无改动自动删除 worktree/分支；有改动自动生成本地快照提交，删除临时目录但保留分支，并把分支、提交、文件清单及合并命令回传主 Agent；保存或清理失败时保留目录以避免丢失
 - **前置条件**：主工作区必须干净且存在有效 `HEAD`。这是为了防止新 worktree 漏掉未提交代码；如需恢复旧的共享目录行为，可将 `ai.subagentWorktreeIsolation` 设为 `false`
 - **隔离边界**：内置 read/write/edit/glob 与 bash 默认目录会切换到 worktree，但这不是 OS 安全沙箱；绝对路径和外部 MCP 服务仍受原权限机制约束。Git 忽略的构建产物不会进入快照提交
+- **生命周期**：worktree 存放于 `~/.thoughtcoding/worktrees/<repo-key>/`，不会依赖易被系统清理的临时目录；`tasks.json` 记录 RUNNING/SAVED/PRESERVED/MERGED/STALE 状态。启动时只执行非破坏性巡检、导入旧版分支，并提示异常、已合并或超过 7 天未合并的残留，不自动删除未合并成果
+- **并发与超时**：短暂的 Git 注册/清理阶段使用 JVM 锁 + 文件锁串行化，SubAgent 实际执行仍保持并行；Git 锁竞争会有限重试，进程和输出流分别设置超时
+
+`WorktreeRegistry.java`
+
+- **功能**：持久化 Worktree 任务索引
+- **特性**：按仓库哈希分目录，`tasks.json.tmp` 写完后原子替换；同 JVM 用 `ReentrantLock` 排队，不同 ThoughtCoding 进程再通过文件锁互斥
+
+#### SubAgent Worktree 管理命令
+
+```text
+/agents list
+/agents cleanup
+/agents cleanup <id>
+/agents cleanup --older-than 7
+/agents cleanup <id> --force
+```
+
+- 不带 `--force` 时，只清理已合并、无产物或确认没有改动的任务。
+- 未合并分支、异常退出后保留的 worktree 默认跳过。
+- `--force` 必须指定唯一任务 ID，会永久删除该任务尚未合并的本地成果，不支持批量强制删除。
 
 `ProjectContext.java`
 
