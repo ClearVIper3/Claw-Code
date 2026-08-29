@@ -21,7 +21,7 @@
 - **即插即用** - 无需重启即可动态连接新的 MCP 服务器
 - **预定义工具** - 内置常用 MCP 工具快捷方式，一键连接
 - **技能系统** - 内置 6 个技能（docx/pdf/pptx/xlsx/mcp-builder/skill-creator），模型可按需加载 `SKILL.md` 完整说明
-- **子代理** - `subAgent` 工具派发隔离的子 Agent 执行独立子任务，仅回传最终结论
+- **子代理** - `subAgent` 工具派发隔离的子 Agent；默认在独立 Git worktree/本地分支中执行，改动不会直接写进主工作区
 - **并行子代理** - 基于 Java 21 虚拟线程（Loom）+ Semaphore 限流的 SubAgent 并发调度：同一批多个 subAgent 调用并行执行；`background: true` 时后台运行、结论自动注入下一轮对话
 - **任务中断** - 协作式取消令牌（CancelToken）跨层传播：agent 回合后台化，生成期间输入 `stop` 即可中断——流式提前结束、bash 子进程被 kill、子代理逐轮检查退出，且保证工具调用/结果 id 配对不被破坏
 - **并发安全确认** - 并行子代理的权限确认框经全局锁串行化排队，终端输入由主线程统一路由（ConsoleInputRouter），多代理并发不打架
@@ -51,6 +51,7 @@ ThoughtCoding/
 │   │   ├── ThoughtCodingContext.java    # 应用上下文（依赖注入容器）
 │   │   ├── AgentLoop.java               # Agent 循环引擎（原生 function calling）
 │   │   ├── SubAgent.java                # 子代理（隔离子任务）
+│   │   ├── WorktreeManager.java          # 子代理 Git worktree 创建、快照与安全清理
 │   │   ├── ProjectContext.java          # 项目上下文检测
 │   │   ├── ToolExecutionConfirmation.java # 工具执行确认（YES/NO 两选项）
 │   │   └── DirectCommandExecutor.java   # 直接命令执行器（/ 斜杠命令）
@@ -243,6 +244,14 @@ ThoughtCoding/
 - **功能**：子代理
 - **特性**：用隔离的对话历史执行单一切片任务，看不到主对话；通过 `LangChainService.chatOnceForSubagent` 调用（已过滤掉 `subAgent` 工具自身，防递归），结果仅回传最终结论
 
+`WorktreeManager.java`
+
+- **功能**：SubAgent Git 工作区隔离
+- **特性**：每次任务从当前 `HEAD` 创建唯一的 `thoughtcoding/subagent/*` 分支和临时 worktree；内置文件工具、权限路径判断及 bash 默认目录均线程级切换到该 worktree，不修改全局 `user.dir`
+- **结果处理**：无改动自动删除 worktree/分支；有改动自动生成本地快照提交，删除临时目录但保留分支，并把分支、提交、文件清单及合并命令回传主 Agent；保存或清理失败时保留目录以避免丢失
+- **前置条件**：主工作区必须干净且存在有效 `HEAD`。这是为了防止新 worktree 漏掉未提交代码；如需恢复旧的共享目录行为，可将 `ai.subagentWorktreeIsolation` 设为 `false`
+- **隔离边界**：内置 read/write/edit/glob 与 bash 默认目录会切换到 worktree，但这不是 OS 安全沙箱；绝对路径和外部 MCP 服务仍受原权限机制约束。Git 忽略的构建产物不会进入快照提交
+
 `ProjectContext.java`
 
 - **功能**：项目上下文检测
@@ -430,6 +439,7 @@ ai:
   autoProcessToolResults: true  # true=工具结果自动回喂模型，形成 agentic 多轮循环
   maxToolIterations: 10         # 单次用户输入内的最大工具轮次上限
   maxConcurrentSubagents: 3     # 并行子代理上限（虚拟线程 + Semaphore 限流）
+  subagentWorktreeIsolation: true # 子代理使用独立 Git worktree；结果保存到本地分支，不自动合并
   # —— 四层上下文压缩管线（顺序：L3落盘 → L1裁中段 → L2旧结果占位 → L4摘要）——
   maxContextTokens: 48000       # L4：估算 token 超过则 LLM 摘要旧历史（DeepSeek ~64K 窗口留余量）
   maxMessages: 50               # L1：消息条数超过则裁中段（保留头尾）
@@ -484,6 +494,7 @@ mcp:
   - `autoProcessToolResults`: 工具结果是否自动回喂模型继续对话
   - `maxToolIterations`: 单次用户输入内最大工具调用轮次
   - `maxConcurrentSubagents`: 并行子代理上限（默认 3）
+  - `subagentWorktreeIsolation`: 是否启用 SubAgent Git worktree 隔离（默认 `true`）；关闭后恢复直接使用主 workspace
   - `maxContextTokens` / `maxMessages` / `snipKeepHead` / `snipKeepTail` / `keepRecentToolResults` / `perResultPersistBytes` / `l4KeepTail`: 四层压缩管线参数
   - `maxToolResultBytes`: L3 当轮工具结果聚合预算（**注：运行时会覆写为 `maxContextTokens / 2`，配置此值当前不生效**）
 

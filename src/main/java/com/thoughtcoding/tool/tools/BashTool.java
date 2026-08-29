@@ -3,6 +3,7 @@ package com.thoughtcoding.tool.tools;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.thoughtcoding.config.AppConfig;
 import com.thoughtcoding.model.ToolResult;
+import com.thoughtcoding.security.Sandbox;
 import com.thoughtcoding.tool.BaseTool;
 import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
 
@@ -77,7 +78,9 @@ public class BashTool extends BaseTool {
             } else {
                 pb = new ProcessBuilder("sh", "-c", command);
             }
-            pb.directory(new java.io.File(System.getProperty("user.dir")));
+            // 不修改全局 user.dir；并行 SubAgent 通过 Sandbox 的线程级 workspace
+            // 各自在独立 Git worktree 中执行。
+            pb.directory(Sandbox.workspaceRoot().toFile());
             pb.redirectErrorStream(true);
 
             Process process = pb.start();

@@ -3,7 +3,9 @@ package com.thoughtcoding.tool.tools;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.thoughtcoding.core.SubAgent;
 import com.thoughtcoding.core.ThoughtCodingContext;
+import com.thoughtcoding.core.WorktreeManager;
 import com.thoughtcoding.model.ToolResult;
+import com.thoughtcoding.security.Sandbox;
 import com.thoughtcoding.tool.BaseTool;
 import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
 
@@ -90,7 +92,7 @@ public class SubAgentTool extends BaseTool {
                 // 由 SubAgentExecutor 统一管理生命周期与结论注入。
                 com.thoughtcoding.core.SubAgentExecutor.BackgroundTask task =
                         context.getSubAgentExecutor().startBackground(description,
-                                taskToken -> new SubAgent(context).run(prompt, description, taskToken));
+                                taskToken -> runSubAgent(prompt, description, taskToken));
                 return success("子Agent任务已启动（id: " + task.id() + "，标签: " + description
                                 + "），正在后台独立运行。完成后结论会自动注入下一轮对话，无需等待。"
                                 + "可继续处理其他任务。",
@@ -98,7 +100,7 @@ public class SubAgentTool extends BaseTool {
             }
 
             // 前台模式：阻塞至子代理得出结论。批内并行由 AgentLoop 通过 SubAgentExecutor 编排。
-            String conclusion = new SubAgent(context).run(prompt, description, token);
+            String conclusion = runSubAgent(prompt, description, token);
             return success(
                     conclusion == null || conclusion.isBlank()
                             ? "子Agent已结束，但未产出文本结论。" : conclusion,
@@ -109,5 +111,17 @@ public class SubAgentTool extends BaseTool {
             // 兜底：ToolDispatcher.dispatch 不做 try/catch，异常绝不能从这里逃逸破坏主轮次的工具配对
             return error("subAgent 执行失败: " + e.getMessage(), System.currentTimeMillis() - startTime);
         }
+    }
+
+    private String runSubAgent(String prompt, String description,
+                               com.thoughtcoding.core.CancelToken token) {
+        if (!context.getAppConfig().getAi().isSubagentWorktreeIsolation()) {
+            return new SubAgent(context).run(prompt, description, token);
+        }
+
+        WorktreeManager manager = new WorktreeManager(Sandbox.baseWorkspaceRoot());
+        WorktreeManager.RunResult result = manager.run(description,
+                () -> new SubAgent(context).run(prompt, description, token));
+        return result.combinedOutput();
     }
 }

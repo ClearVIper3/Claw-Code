@@ -5,6 +5,7 @@ import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -32,5 +33,18 @@ class AppConfigCompatibilityTest {
         assertNotNull(config.getModelConfig("deepseek-v1"));
         assertTrue(config.getTools().getBash().isEnabled());
         assertTrue(config.getTools().getRead().isEnabled());
+        assertTrue(config.getAi().isSubagentWorktreeIsolation());
+    }
+
+    @Test
+    void canDisableSubagentWorktreeIsolationExplicitly() throws Exception {
+        String yaml = """
+                ai:
+                  subagentWorktreeIsolation: false
+                """;
+
+        AppConfig config = new ObjectMapper(new YAMLFactory()).readValue(yaml, AppConfig.class);
+
+        assertFalse(config.getAi().isSubagentWorktreeIsolation());
     }
 }

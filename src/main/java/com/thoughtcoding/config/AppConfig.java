@@ -294,6 +294,9 @@ public class AppConfig {
         @JsonProperty("maxConcurrentSubagents")
         private int maxConcurrentSubagents = 3; // 并行子代理上限（虚拟线程 + Semaphore 限流，防模型 API 限流）
 
+        @JsonProperty("subagentWorktreeIsolation")
+        private boolean subagentWorktreeIsolation = true; // 子代理默认在独立 Git worktree/本地分支中运行
+
         // ── 四层上下文压缩管线参数（见 ContextManager）——全部有默认值，旧 config 不填也能跑 ──
         @JsonProperty("maxContextTokens")
         private int maxContextTokens = 48000; // L4：估算 token 超过则触发 LLM 摘要（DeepSeek ~64K 窗口留余量）
@@ -341,6 +344,14 @@ public class AppConfig {
 
         public void setMaxConcurrentSubagents(int maxConcurrentSubagents) {
             this.maxConcurrentSubagents = maxConcurrentSubagents;
+        }
+
+        public boolean isSubagentWorktreeIsolation() {
+            return subagentWorktreeIsolation;
+        }
+
+        public void setSubagentWorktreeIsolation(boolean subagentWorktreeIsolation) {
+            this.subagentWorktreeIsolation = subagentWorktreeIsolation;
         }
 
         public int getMaxContextTokens() {

@@ -25,6 +25,7 @@ import java.nio.file.Paths;
 public final class Sandbox {
 
     private static volatile Path workspaceRoot;
+    private static final ThreadLocal<Path> scopedWorkspaceRoot = new ThreadLocal<>();
 
     private Sandbox() {
         // 工具类，禁止实例化
@@ -42,7 +43,7 @@ public final class Sandbox {
         }
     }
 
-    private static Path root() {
+    private static Path baseRoot() {
         Path r = workspaceRoot;
         if (r == null) {
             // 未显式 init 时降级使用当前工作目录
@@ -54,6 +55,55 @@ public final class Sandbox {
             workspaceRoot = r;
         }
         return r;
+    }
+
+    /** 当前执行线程使用的 workspace；SubAgent 可临时覆盖为自己的 Git worktree。 */
+    public static Path workspaceRoot() {
+        Path scoped = scopedWorkspaceRoot.get();
+        return scoped != null ? scoped : baseRoot();
+    }
+
+    /** 应用启动时初始化的主 workspace，不受线程级覆盖影响。 */
+    public static Path baseWorkspaceRoot() {
+        return baseRoot();
+    }
+
+    /**
+     * 在当前线程内把 workspace 切换到指定目录。返回的 scope 必须关闭，支持安全嵌套。
+     * ThreadLocal 而不是修改 {@code user.dir}，避免并行 SubAgent 互相踩工作目录。
+     */
+    public static WorkspaceScope enterWorkspace(Path workspace) {
+        if (workspace == null) {
+            throw new WorkspaceSecurityException("workspace 不能为空");
+        }
+        Path normalized = workspace.toAbsolutePath().normalize();
+        try {
+            normalized = normalized.toRealPath();
+        } catch (Exception ignored) {
+        }
+        Path previous = scopedWorkspaceRoot.get();
+        scopedWorkspaceRoot.set(normalized);
+        return new WorkspaceScope(previous);
+    }
+
+    public static final class WorkspaceScope implements AutoCloseable {
+        private final Path previous;
+        private boolean closed;
+
+        private WorkspaceScope(Path previous) {
+            this.previous = previous;
+        }
+
+        @Override
+        public void close() {
+            if (closed) return;
+            closed = true;
+            if (previous == null) {
+                scopedWorkspaceRoot.remove();
+            } else {
+                scopedWorkspaceRoot.set(previous);
+            }
+        }
     }
 
     // ── 路径解析（不做权限决策）──
@@ -70,7 +120,7 @@ public final class Sandbox {
             throw new WorkspaceSecurityException("路径不能为空");
         }
 
-        Path root = root();
+        Path root = workspaceRoot();
         String expanded = expandUserHome(rawPath.trim());
         return root.resolve(expanded).normalize();
     }
@@ -80,7 +130,7 @@ public final class Sandbox {
      */
     public static boolean isWithinWorkspace(Path path) {
         if (path == null) return false;
-        Path root = root();
+        Path root = workspaceRoot();
         try {
             return path.toRealPath().startsWith(root);
         } catch (Exception e) {

@@ -3,6 +3,7 @@ package com.thoughtcoding.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.thoughtcoding.config.AppConfig;
+import com.thoughtcoding.security.Sandbox;
 import com.thoughtcoding.model.ChatMessage;
 import com.thoughtcoding.skill.SkillRegistry;
 import com.thoughtcoding.util.FileUtils;
@@ -473,7 +474,7 @@ public class ContextManager {
      */
     public ChatMessage buildProjectContextMessage() {
         try {
-            String cwd = System.getProperty("user.dir");
+            String cwd = Sandbox.workspaceRoot().toString();
             if (cwd == null || cwd.isEmpty()) {
                 return null;
             }
@@ -526,7 +527,7 @@ public class ContextManager {
      * （递归无需在提示词里防：subAgent 工具已从子Agent可见的工具规格中过滤掉。）
      */
     public String buildSubagentSystemPrompt() {
-        String cwd = System.getProperty("user.dir");
+        String cwd = Sandbox.workspaceRoot().toString();
         StringBuilder sb = new StringBuilder();
         sb.append("## 指令\n");
         sb.append("- 始终用中文回答，解释与代码注释也用中文。\n");
@@ -542,6 +543,7 @@ public class ContextManager {
         sb.append("1. 需要操作时直接调用系统提供的工具（其名称/说明/参数已由系统注入），不要把工具名写进普通文本，也不要编造工具结果。\n");
         sb.append("2. 改动已有文件优先用 edit；新建/覆盖用 write；读文件用 read；跑命令或搜索内容用 bash。\n");
         sb.append("3. 完成后用简洁的中文给出最终结论——这段结论是唯一会回传给主Agent的内容，中间过程不会保留，务必把关键结果讲清楚。\n");
+        sb.append("4. 当前目录可能是隔离的 Git worktree；不要切换分支、创建 worktree 或自行合并。你的改动会由系统在结束时保存到独立分支。\n");
 
         appendSkillCatalog(sb);
         return sb.toString();
