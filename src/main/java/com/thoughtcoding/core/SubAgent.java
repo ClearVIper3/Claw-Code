@@ -64,7 +64,8 @@ public class SubAgent {
         // SubAgent自己的权限栈（共享 UI；auto-approve 默认 false —— 更安全的方向）。
         // ownerLabel 让并发子代理的确认框能区分来源。
         ToolExecutionConfirmation confirmation =
-                new ToolExecutionConfirmation(ui, ui.getLineReader(), "[SubAgent " + label + "]");
+                new ToolExecutionConfirmation(ui, ui.getLineReader(), "[SubAgent " + label + "]",
+                        context::getConsoleInputRouter);
         HookRegistry hookRegistry = new HookRegistry();
         hookRegistry.register(HookType.PRE_TOOL_USE, new PermissionHook(confirmation));
         ToolDispatcher dispatcher = new ToolDispatcher(context.getToolRegistry());

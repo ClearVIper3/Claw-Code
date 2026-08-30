@@ -27,11 +27,13 @@ public class AgentTurnRunner {
     private final AgentLoop agentLoop;
     private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
     private final AtomicReference<CurrentTurn> current = new AtomicReference<>();
+    private final ConsoleInputRouter inputRouter;
 
     public AgentTurnRunner(AgentLoop agentLoop, ThoughtCodingContext context) {
         this.agentLoop = agentLoop;
         // 路由器的 owner 就是创建本 runner 的线程（REPL 主线程）
-        context.setConsoleInputRouter(new ConsoleInputRouter(Thread.currentThread()));
+        this.inputRouter = new ConsoleInputRouter(Thread.currentThread());
+        context.setConsoleInputRouter(inputRouter);
     }
 
     /** 是否有回合正在执行。 */
@@ -63,6 +65,7 @@ public class AgentTurnRunner {
         CurrentTurn turn = current.get();
         if (turn != null && !turn.future().isDone()) {
             turn.token().cancel();
+            inputRouter.cancelPending();
             return true;
         }
         return false;
@@ -83,6 +86,7 @@ public class AgentTurnRunner {
     /** 退出时：取消运行中的回合并关闭线程池。 */
     public void shutdown() {
         cancelCurrent();
+        inputRouter.cancelPending();
         executor.shutdownNow();
     }
 }

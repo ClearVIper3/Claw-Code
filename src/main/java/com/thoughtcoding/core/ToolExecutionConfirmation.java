@@ -5,6 +5,7 @@ import com.thoughtcoding.ui.ThoughtCodingUI;
 import org.jline.reader.LineReader;
 
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Supplier;
 
 /**
  * 工具执行确认组件
@@ -25,33 +26,46 @@ public class ToolExecutionConfirmation {
     private final ThoughtCodingUI ui;
     private final LineReader lineReader;
     private final String ownerLabel;          // null=主循环；否则如 "[SubAgent 调研]"
-    private final ConsoleInputRouter router;  // null=无路由（单次提问模式，全程主线程）
+    /**
+     * 动态获取输入路由器。
+     *
+     * <p>AgentLoop 会先于 AgentTurnRunner 创建，若在构造时直接保存 router，交互模式下
+     * 得到的会永久是 null。这里改为执行确认时再从 Context 获取，使已经创建的主 Agent
+     * 和后续创建的 SubAgent 都能复用 AgentTurnRunner 安装的同一个路由器。
+     */
+    private final Supplier<ConsoleInputRouter> routerSupplier;
     private boolean autoApproveMode = false;
 
     public ToolExecutionConfirmation(ThoughtCodingUI ui, LineReader lineReader) {
-        this(ui, lineReader, null, null);
+        this(ui, lineReader, null, () -> null);
     }
 
     public ToolExecutionConfirmation(ThoughtCodingUI ui, LineReader lineReader, String ownerLabel) {
-        this(ui, lineReader, ownerLabel, null);
+        this(ui, lineReader, ownerLabel, () -> null);
     }
 
     public ToolExecutionConfirmation(ThoughtCodingUI ui, LineReader lineReader,
-                                     String ownerLabel, ConsoleInputRouter router) {
+                                     String ownerLabel, Supplier<ConsoleInputRouter> routerSupplier) {
         this.ui = ui;
         this.lineReader = lineReader;
         this.ownerLabel = ownerLabel;
-        this.router = router;
+        this.routerSupplier = routerSupplier != null ? routerSupplier : () -> null;
     }
 
     /**
      * 读一行用户输入：主线程直接读；agent 线程经路由器等待主线程投递。
      */
-    private String readLine(String prompt) {
+    String readLine(String prompt) {
+        ConsoleInputRouter router = routerSupplier.get();
         if (router != null && !router.isOnOwnerThread()) {
             return router.awaitLine();
         }
         return lineReader.readLine(prompt);
+    }
+
+    private boolean usesRouterOnCurrentThread() {
+        ConsoleInputRouter router = routerSupplier.get();
+        return router != null && !router.isOnOwnerThread();
     }
 
     /**
@@ -91,11 +105,18 @@ public class ToolExecutionConfirmation {
         while (retryCount < maxRetries) {
             try {
                 String prompt = "\n" + (ownerLabel == null ? "" : ownerLabel + " ") + "请选择 [1/2]: ";
+                boolean routedRead = usesRouterOnCurrentThread();
                 String response = readLine(prompt);
 
                 retryCount++;
 
                 if (response == null) {
+                    if (routedRead) {
+                        // Router 返回 null 代表确认等待已被 stop/退出取消，或达到等待上限。
+                        // 不能按普通读取失败重试，否则会重新注册 pending 并再次阻塞 Agent 线程。
+                        ui.displayWarning("⚠️  确认等待已取消，操作未执行");
+                        return ActionType.NO;
+                    }
                     if (retryCount < maxRetries) {
                         ui.displayWarning("⚠️  输入读取失败，正在重试... (" + retryCount + "/" + maxRetries + ")");
                         Thread.sleep(100);

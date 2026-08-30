@@ -48,7 +48,7 @@ public class AgentLoop {
             context.getUi(),
             context.getUi().getLineReader(),
             null,
-            context.getConsoleInputRouter()   // 回合后台化后：确认输入经路由器由主线程投递
+            context::getConsoleInputRouter    // Runner 晚于 Loop 创建，执行确认时再动态获取
         );
         this.toolDispatcher = new ToolDispatcher(context.getToolRegistry());
 
