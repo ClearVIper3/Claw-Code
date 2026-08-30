@@ -110,7 +110,7 @@ public class SubAgentTool extends BaseTool {
         } catch (com.thoughtcoding.core.CancelledException e) {
             return error("子Agent已被用户取消", System.currentTimeMillis() - startTime);
         } catch (Exception e) {
-            // 兜底：ToolDispatcher.dispatch 不做 try/catch，异常绝不能从这里逃逸破坏主轮次的工具配对
+            // 工具自身保留业务兜底；Dispatcher 还会提供统一异常边界，双重保证主轮次工具配对。
             return error("subAgent 执行失败: " + e.getMessage(), System.currentTimeMillis() - startTime);
         }
     }

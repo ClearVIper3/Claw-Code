@@ -325,7 +325,7 @@ ThoughtCoding/
 `ToolDispatcher.java`
 
 - **功能**：工具执行收口
-- **特性**：原生 function calling 与 MCP 工具的执行收口（查表 → Jackson 序列化参数 → `execute(JSON)`）；自身不做 try/catch、不做权限决策。权限由 `AgentLoop` 的 `HookRegistry.fire(PRE_TOOL_USE)` → `PermissionHook` → `PermissionGate.check` 完成。例外：`DirectCommandExecutor` 自建 `BashTool` 实例、不经过本收口
+- **特性**：原生 function calling 与 MCP 工具的执行收口（查表 → Jackson 序列化参数 → `execute(JSON)`）；统一把参数序列化失败、工具运行时异常、取消与空返回收敛为非空 `ToolResult`，保证 provider tool call 始终可写入配对结果。权限由 `AgentLoop` 的 `HookRegistry.fire(PRE_TOOL_USE)` → `PermissionHook` → `PermissionGate.check` 完成。例外：`DirectCommandExecutor` 自建 `BashTool` 实例、不经过本收口
 
 `ToolSpecificationFactory.java`
 
@@ -345,7 +345,7 @@ ThoughtCoding/
 | `skill` | 加载 `skills/*/SKILL.md` | `name`（enum 约束，仅限已扫描到的技能名） | `skills/` 目录非空时才注册；结果不 dump 但回喂 |
 | `subAgent` | 派发隔离子 Agent 执行子任务 | `description`、`prompt`、`subagentType` | 过滤自身 spec 防递归；结论回传主循环，过程不 dump |
 
-**扩展性**：① 继承 `BaseTool`（覆写 `execute` + `inputSchema`）→ ② 在 `ThoughtCodingContext.initialize()` 里 `register` → ③ 在 `PermissionGate.check` 补一条 `case` 定权限；若是大输出只读工具，还需加进 `AgentLoop.QUIET_OUTPUT_TOOLS` 以免刷屏。`ToolDispatcher` 不捕获异常，工具抛出的运行时异常会破坏 call/result 配对、导致后续请求 400，故工具须自行兜底。注：新工具无法通过 `config.yaml` 关闭（`isToolEnabled` 的 switch 只覆盖 bash/read/write/edit/glob）。
+**扩展性**：① 继承 `BaseTool`（覆写 `execute` + `inputSchema`）→ ② 在 `ThoughtCodingContext.initialize()` 里 `register` → ③ 在 `PermissionGate.check` 补一条 `case` 定权限；若是大输出只读工具，还需加进 `AgentLoop.QUIET_OUTPUT_TOOLS` 以免刷屏。`ToolDispatcher` 统一兜底工具异常并返回失败结果，工具仍应优先返回具体、可恢复的业务错误。注：新工具无法通过 `config.yaml` 关闭（`isToolEnabled` 的 switch 只覆盖 bash/read/write/edit/glob）。
 
 ### `src/main/java/com/thoughtcoding/security/` - 权限与沙箱
 
@@ -692,8 +692,8 @@ public class MyTool extends BaseTool {
     @Override
     public ToolResult execute(String input) {
         // input 为 JSON 字符串，从 ToolDispatcher 经 Jackson 反序列化后传入
-        // ⚠️ ToolDispatcher 不捕获异常：工具抛出的运行时异常会破坏 call/result 配对、
-        //    导致下一次请求 400。请在此自行兜底（try/catch 后返回 error(...））。
+        // ToolDispatcher 会将未处理异常收敛为 ToolResult.error；工具内部仍建议返回
+        // 更明确、可恢复的业务错误，便于模型决定下一步动作。
         return success("工具执行结果");
     }
 
