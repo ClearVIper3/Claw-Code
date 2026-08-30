@@ -9,7 +9,6 @@ import com.thoughtcoding.model.ToolCall;
 import com.thoughtcoding.model.ToolResult;
 import com.thoughtcoding.service.PerformanceMonitor;
 import com.thoughtcoding.security.PermissionHook;
-import com.thoughtcoding.tool.ToolDispatcher;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -34,7 +33,7 @@ public class AgentLoop {
     private final String sessionId;
     private final String modelName;
     private final ToolExecutionConfirmation confirmation;  // 交互式确认组件
-    private final ToolDispatcher toolDispatcher;
+    private final ToolExecutionPipeline toolPipeline;
     private final HookRegistry hookRegistry;               // 基于注册表的 Hook 系统
 
     // 缓存本轮模型请求的工具调用（原生路径一轮可能有多个）
@@ -52,14 +51,14 @@ public class AgentLoop {
             null,
             context::getConsoleInputRouter    // Runner 晚于 Loop 创建，执行确认时再动态获取
         );
-        this.toolDispatcher = new ToolDispatcher(context.getToolRegistry());
-
         // 一开始先注册四种 hook 时机（动作由业务方按需 register 追加）
         this.hookRegistry = new HookRegistry();
 
         // 将权限检查注册为 PRE_TOOL_USE 的 hook 动作
         this.hookRegistry.register(com.thoughtcoding.hook.HookType.PRE_TOOL_USE,
                 new PermissionHook(this.confirmation));
+        this.toolPipeline = new ToolExecutionPipeline(
+                context, this.hookRegistry, context.getToolRegistry());
 
         // 设置消息和工具调用处理器
         context.getAiService().setMessageHandler(this::handleMessage);
@@ -185,7 +184,8 @@ public class AgentLoop {
 
             // ── 批内 subAgent 并行：≥2 个 subAgent 调用时预执行（虚拟线程），
             //    其余工具保持串行。结果按调用实例暂存，下面按原顺序统一回喂。
-            Map<ToolCall, ToolResult> parallelResults = preExecuteSubAgents(batch, token);
+            Map<ToolCall, ToolExecutionPipeline.Outcome> parallelResults =
+                    preExecuteSubAgents(batch, token);
 
             boolean cancelled = false;
 
@@ -199,38 +199,24 @@ public class AgentLoop {
                     break;
                 }
 
-                // ── Hook: PreToolUse（工具执行前）—— 权限检查 + 自定义动作 ──
-                // PermissionHook 已注册在此时机：DENY → BLOCK，WARN → 弹确认
-                // （并行路径的 subAgent 已在 preExecuteSubAgents 内触发过 hook）
-                ToolResult result;
+                // 共享工具管线：PreToolUse → dispatch → PostToolUse。
+                // 并行路径已在任务线程执行管线，此处仅按原调用顺序汇总。
+                ToolExecutionPipeline.Outcome outcome;
                 if (parallelResults.containsKey(call)) {
-                    result = parallelResults.get(call);
+                    outcome = parallelResults.get(call);
                 } else {
-                    HookResult preResult = hookRegistry.fire(
-                            HookContext.forPreTool(context, history, call));
-                    if (preResult.isBlocked()) {
-                        String msg = preResult.message() != null ? preResult.message() : "工具执行被阻止。";
-                        context.getUi().displayError(msg);
-                        history.add(ChatMessage.toolResult(
-                            call.getProviderCallId(), call.getToolName(), msg));
-                        continue;
-                    }
-
-                    // 执行并把结果按 id 配对写回 history
-                    result = toolDispatcher.dispatch(call, token);
+                    outcome = toolPipeline.execute(call, token, history);
                 }
 
-                // ── Hook: PostToolUse（工具执行后）──
-                hookRegistry.fire(HookContext.forPostTool(context, history, call, result));
+                toolPipeline.recordResult(call, outcome, history);
+                if (outcome.isBlocked()) {
+                    context.getUi().displayError(outcome.result().getError());
+                    continue;
+                }
 
-                displayNativeToolResult(call, result);
+                displayNativeToolResult(call, outcome.result());
                 // 工具结果显示后空一行，避免与下一轮 AI 流式文本挤在同一区域
                 context.getUi().getTerminal().writer().println();
-                String resultText = result.isSuccess()
-                        ? (result.getOutput() == null || result.getOutput().isBlank()
-                            ? "执行成功（无输出）。" : result.getOutput())
-                        : ("执行失败: " + result.getError());
-                history.add(ChatMessage.toolResult(call.getProviderCallId(), call.getToolName(), resultText));
             }
 
             if (cancelled) {
@@ -257,29 +243,25 @@ public class AgentLoop {
      *
      * @return 调用实例 → 结果；串行路径（0/1 个 subAgent）返回空 Map
      */
-    private Map<ToolCall, ToolResult> preExecuteSubAgents(List<ToolCall> batch, CancelToken token) {
+    private Map<ToolCall, ToolExecutionPipeline.Outcome> preExecuteSubAgents(
+            List<ToolCall> batch, CancelToken token) {
         List<ToolCall> subCalls = new ArrayList<>();
         for (ToolCall c : batch) {
             if ("subAgent".equals(c.getToolName())) {
                 subCalls.add(c);
             }
         }
-        Map<ToolCall, ToolResult> results = new java.util.IdentityHashMap<>();
+        Map<ToolCall, ToolExecutionPipeline.Outcome> results = new java.util.IdentityHashMap<>();
         if (subCalls.size() < 2) {
             return results;
         }
 
         context.getUi().displayInfo("🚀 " + subCalls.size() + " 个子Agent并行执行中...");
 
-        List<java.util.concurrent.Future<ToolResult>> futures = new ArrayList<>();
+        List<java.util.concurrent.Future<ToolExecutionPipeline.Outcome>> futures = new ArrayList<>();
         for (ToolCall c : subCalls) {
-            futures.add(context.getSubAgentExecutor().submitForeground(() -> {
-                HookResult pre = hookRegistry.fire(HookContext.forPreTool(context, history, c));
-                if (pre.isBlocked()) {
-                    return ToolResult.error(pre.message() != null ? pre.message() : "工具执行被阻止。", 0);
-                }
-                return toolDispatcher.dispatch(c, token);
-            }));
+            futures.add(context.getSubAgentExecutor().submitForeground(
+                    () -> toolPipeline.execute(c, token, history)));
         }
 
         for (int i = 0; i < subCalls.size(); i++) {
@@ -287,7 +269,8 @@ public class AgentLoop {
             try {
                 results.put(c, futures.get(i).get());
             } catch (Exception e) {
-                results.put(c, ToolResult.error("子Agent执行异常: " + e.getMessage(), 0));
+                results.put(c, ToolExecutionPipeline.Outcome.executed(
+                        ToolResult.error("子Agent执行异常: " + e.getMessage(), 0)));
             }
         }
         return results;

@@ -52,6 +52,7 @@ ThoughtCoding/
 │   │   ├── ThoughtCodingContext.java    # 应用上下文（依赖注入容器）
 │   │   ├── AgentLoop.java               # Agent 循环引擎（原生 function calling）
 │   │   ├── SubAgent.java                # 子代理（隔离子任务）
+│   │   ├── ToolExecutionPipeline.java   # 主/子 Agent 共用工具治理管线
 │   │   ├── WorktreeManager.java          # 子代理 Git worktree 创建、快照与安全清理
 │   │   ├── WorktreeRegistry.java         # 持久化任务索引与跨进程仓库锁
 │   │   ├── ProjectContext.java          # 项目上下文检测
@@ -240,12 +241,17 @@ ThoughtCoding/
 `AgentLoop.java`
 
 - **功能**：Agent 循环引擎
-- **特性**：基于 LangChain4j 原生 function calling 的多轮 agentic 循环；模型请求工具 → `HookRegistry.fire(PRE_TOOL_USE)` 权限检查 → `ToolDispatcher` 执行 → 结果按 `providerCallId` 配对回喂 → 无新工具时终止，或达到 `maxToolIterations` 上限
+- **特性**：基于 LangChain4j 原生 function calling 的多轮 agentic 循环；模型请求工具 → `ToolExecutionPipeline` 统一执行 PreHook / Dispatcher / PostHook 并生成配对结果 → 无新工具时终止，或达到 `maxToolIterations` 上限
 
 `SubAgent.java`
 
 - **功能**：子代理
-- **特性**：用隔离的对话历史执行单一切片任务，看不到主对话；通过 `LangChainService.chatOnceForSubagent` 调用（已过滤掉 `subAgent` 工具自身，防递归），结果仅回传最终结论
+- **特性**：用隔离的对话历史执行单一切片任务，看不到主对话；通过 `LangChainService.chatOnceForSubagent` 调用（已过滤掉 `subAgent` 工具自身，防递归），并与主 Agent 共用 `ToolExecutionPipeline` 治理工具调用，结果仅回传最终结论
+
+`ToolExecutionPipeline.java`
+
+- **功能**：统一工具治理管线
+- **特性**：集中执行 `PreToolUse → ToolDispatcher → PostToolUse → history tool-result`；阻断、成功和失败结果使用统一回喂格式，主 Agent、SubAgent 与直接命令只保留各自的循环、并发和 UI 展示逻辑
 
 `WorktreeManager.java`
 

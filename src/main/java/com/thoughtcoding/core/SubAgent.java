@@ -1,10 +1,7 @@
 package com.thoughtcoding.core;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.thoughtcoding.config.AppConfig;
-import com.thoughtcoding.hook.HookContext;
 import com.thoughtcoding.hook.HookRegistry;
-import com.thoughtcoding.hook.HookResult;
 import com.thoughtcoding.hook.HookType;
 import com.thoughtcoding.model.ChatMessage;
 import com.thoughtcoding.model.SubagentTurn;
@@ -12,7 +9,6 @@ import com.thoughtcoding.model.ToolCall;
 import com.thoughtcoding.model.ToolCallRef;
 import com.thoughtcoding.model.ToolResult;
 import com.thoughtcoding.security.PermissionHook;
-import com.thoughtcoding.tool.ToolDispatcher;
 import com.thoughtcoding.ui.ThoughtCodingUI;
 
 import java.util.ArrayList;
@@ -68,7 +64,8 @@ public class SubAgent {
                         context::getConsoleInputRouter);
         HookRegistry hookRegistry = new HookRegistry();
         hookRegistry.register(HookType.PRE_TOOL_USE, new PermissionHook(confirmation));
-        ToolDispatcher dispatcher = new ToolDispatcher(context.getToolRegistry());
+        ToolExecutionPipeline toolPipeline = new ToolExecutionPipeline(
+                context, hookRegistry, context.getToolRegistry());
 
         String subPrompt = context.getContextManager().buildSubagentSystemPrompt();
 
@@ -119,28 +116,15 @@ public class SubAgent {
 
                 printLine(ui, "[SubAgent] 调用 " + name + argSummary(params));
 
-                // 权限管道（写/执行类会弹确认）
-                HookResult pre = hookRegistry.fire(HookContext.forPreTool(context, subHistory, call));
-                if (pre.isBlocked()) {
-                    String msg = pre.message() != null ? pre.message() : "工具执行被阻止。";
-                    printLine(ui, "[SubAgent] 结果: 已阻止 —— " + oneLine(msg, 80));
-                    subHistory.add(ChatMessage.toolResult(id, name, msg));
-                    continue;
-                }
-
-                // 执行 —— 任何异常都转成配对的 tool 结果，绝不逃逸破坏配对
-                try {
-                    ToolResult result = dispatcher.dispatch(call, token);
-                    String resultText = result.isSuccess()
-                            ? (result.getOutput() == null || result.getOutput().isBlank()
-                                ? "执行成功（无输出）。" : result.getOutput())
-                            : ("执行失败: " + result.getError());
+                ToolExecutionPipeline.Outcome outcome =
+                        toolPipeline.executeAndRecord(call, token, subHistory);
+                ToolResult result = outcome.result();
+                if (outcome.isBlocked()) {
+                    printLine(ui, "[SubAgent] 结果: 已阻止 —— "
+                            + oneLine(result.getError(), 80));
+                } else {
                     printLine(ui, "[SubAgent] 结果: " + (result.isSuccess()
                             ? "成功" : ("失败 —— " + oneLine(result.getError(), 80))));
-                    subHistory.add(ChatMessage.toolResult(id, name, resultText));
-                } catch (Exception e) {
-                    printLine(ui, "[SubAgent] 结果: 执行异常 —— " + oneLine(e.getMessage(), 80));
-                    subHistory.add(ChatMessage.toolResult(id, name, "执行异常: " + e.getMessage()));
                 }
             }
         }

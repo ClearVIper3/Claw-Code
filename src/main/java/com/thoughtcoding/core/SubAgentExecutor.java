@@ -74,8 +74,7 @@ public class SubAgentExecutor {
      * 提交一个前台子代理任务：虚拟线程执行，持有许可（限流）。
      * 调用方（AgentLoop）自行决定等待一个还是一批。
      */
-    public Future<com.thoughtcoding.model.ToolResult> submitForeground(
-            Callable<com.thoughtcoding.model.ToolResult> task) {
+    public <T> Future<T> submitForeground(Callable<T> task) {
         return executor.submit(() -> {
             permits.acquire();
             try {

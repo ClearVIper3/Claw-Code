@@ -1,14 +1,11 @@
 package com.thoughtcoding.core;
 
-import com.thoughtcoding.hook.HookContext;
 import com.thoughtcoding.hook.HookRegistry;
-import com.thoughtcoding.hook.HookResult;
 import com.thoughtcoding.hook.HookType;
 import com.thoughtcoding.model.ToolCall;
 import com.thoughtcoding.ui.ThoughtCodingUI;
 import com.thoughtcoding.model.ToolResult;
 import com.thoughtcoding.security.PermissionHook;
-import com.thoughtcoding.tool.ToolDispatcher;
 
 import java.util.*;
 import java.util.regex.Pattern;
@@ -19,10 +16,8 @@ import java.util.regex.Pattern;
  */
 public class DirectCommandExecutor {
 
-    private final ThoughtCodingContext context;
     private final ThoughtCodingUI ui;
-    private final ToolDispatcher toolDispatcher;
-    private final HookRegistry hookRegistry;
+    private final ToolExecutionPipeline toolPipeline;
     private final ProjectContext projectContext;
 
     // 直接执行的模式匹配
@@ -209,11 +204,11 @@ public class DirectCommandExecutor {
 
     /** 测试/嵌入场景可注入确认组件，生产入口使用上面的统一确认栈。 */
     DirectCommandExecutor(ThoughtCodingContext context, ToolExecutionConfirmation confirmation) {
-        this.context = context;
         this.ui = context.getUi();
-        this.toolDispatcher = new ToolDispatcher(context.getToolRegistry());
-        this.hookRegistry = new HookRegistry()
+        HookRegistry hookRegistry = new HookRegistry()
                 .register(HookType.PRE_TOOL_USE, new PermissionHook(confirmation));
+        this.toolPipeline = new ToolExecutionPipeline(
+                context, hookRegistry, context.getToolRegistry());
         this.projectContext = new ProjectContext(System.getProperty("user.dir"));
     }
 
@@ -460,18 +455,7 @@ public class DirectCommandExecutor {
         Map<String, Object> parameters = Collections.singletonMap("command", command);
         ToolCall call = new ToolCall("bash", parameters, null, false, 0, false, null);
 
-        HookResult preResult = hookRegistry.fire(
-                HookContext.forPreTool(context, Collections.emptyList(), call));
-        if (preResult.isBlocked()) {
-            String message = preResult.message() != null
-                    ? preResult.message() : "直接命令已被权限策略阻止。";
-            return ToolResult.error(message, 0);
-        }
-
-        ToolResult result = toolDispatcher.dispatch(call);
-        hookRegistry.fire(HookContext.forPostTool(
-                context, Collections.emptyList(), call, result));
-        return result;
+        return toolPipeline.execute(call, null, Collections.emptyList()).result();
     }
 
     /**
