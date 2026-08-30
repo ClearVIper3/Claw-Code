@@ -1,8 +1,14 @@
 package com.thoughtcoding.core;
 
-import com.thoughtcoding.tool.tools.BashTool;
+import com.thoughtcoding.hook.HookContext;
+import com.thoughtcoding.hook.HookRegistry;
+import com.thoughtcoding.hook.HookResult;
+import com.thoughtcoding.hook.HookType;
+import com.thoughtcoding.model.ToolCall;
 import com.thoughtcoding.ui.ThoughtCodingUI;
 import com.thoughtcoding.model.ToolResult;
+import com.thoughtcoding.security.PermissionHook;
+import com.thoughtcoding.tool.ToolDispatcher;
 
 import java.util.*;
 import java.util.regex.Pattern;
@@ -15,7 +21,8 @@ public class DirectCommandExecutor {
 
     private final ThoughtCodingContext context;
     private final ThoughtCodingUI ui;
-    private final BashTool bash;
+    private final ToolDispatcher toolDispatcher;
+    private final HookRegistry hookRegistry;
     private final ProjectContext projectContext;
 
     // 直接执行的模式匹配
@@ -23,12 +30,6 @@ public class DirectCommandExecutor {
 
     // 自然语言命令映射
     private static final Map<Pattern, String> NATURAL_LANGUAGE_COMMANDS = new HashMap<>();
-
-    // 需要确认的敏感命令
-    private static final Set<String> CONFIRM_REQUIRED_COMMANDS = Set.of(
-            "rm -rf", "git push --force", "docker rm", "docker rmi",
-            "kill -9", "sudo", "chmod 777", "dd if="
-    );
 
     static {
         // Java相关命令
@@ -199,9 +200,20 @@ public class DirectCommandExecutor {
      * 构造函数
      */
     public DirectCommandExecutor(ThoughtCodingContext context) {
+        this(context, new ToolExecutionConfirmation(
+                context.getUi(),
+                context.getUi().getLineReader(),
+                "[直接命令]",
+                context::getConsoleInputRouter));
+    }
+
+    /** 测试/嵌入场景可注入确认组件，生产入口使用上面的统一确认栈。 */
+    DirectCommandExecutor(ThoughtCodingContext context, ToolExecutionConfirmation confirmation) {
         this.context = context;
         this.ui = context.getUi();
-        this.bash = new BashTool(context.getAppConfig());
+        this.toolDispatcher = new ToolDispatcher(context.getToolRegistry());
+        this.hookRegistry = new HookRegistry()
+                .register(HookType.PRE_TOOL_USE, new PermissionHook(confirmation));
         this.projectContext = new ProjectContext(System.getProperty("user.dir"));
     }
 
@@ -371,14 +383,6 @@ public class DirectCommandExecutor {
             command = "git commit -m \"" + message + "\"";
         }
 
-        // 检查是否需要确认
-        if (requiresConfirmation(command)) {
-            if (!askForConfirmation(command)) {
-                ui.displayInfo("命令执行已取消");
-                return false;
-            }
-        }
-
         // 执行命令
         executeCommand(command);
         return true;
@@ -423,12 +427,7 @@ public class DirectCommandExecutor {
         for (int i = 0; i < commands.size(); i++) {
             ui.displayInfo("  " + (i + 1) + ". " + commands.get(i));
         }
-
-        String confirm = ui.readInput("确认执行吗? (y/N): ");
-        if (!"y".equalsIgnoreCase(confirm) && !"yes".equalsIgnoreCase(confirm)) {
-            ui.displayInfo("批量操作已取消");
-            return false;
-        }
+        ui.displayInfo("每一步执行前都会经过统一权限检查与独立确认。");
 
         // 执行所有命令
         for (int i = 0; i < commands.size(); i++) {
@@ -453,15 +452,26 @@ public class DirectCommandExecutor {
         return true;
     }
 
-    /** 用 bash 工具执行一条命令（把原始命令包成 JSON 入参）。 */
-    private ToolResult runBash(String command) {
-        try {
-            String json = new com.fasterxml.jackson.databind.ObjectMapper()
-                    .writeValueAsString(java.util.Collections.singletonMap("command", command));
-            return bash.execute(json);
-        } catch (Exception e) {
-            return ToolResult.error("命令封装失败: " + e.getMessage(), 0);
+    /**
+     * 用注册表中的 bash 工具执行命令，完整经过 PreToolUse 权限 Hook、统一 Dispatcher
+     * 和 PostToolUse Hook。无论拒绝或执行失败都返回非空结果。
+     */
+    ToolResult runBash(String command) {
+        Map<String, Object> parameters = Collections.singletonMap("command", command);
+        ToolCall call = new ToolCall("bash", parameters, null, false, 0, false, null);
+
+        HookResult preResult = hookRegistry.fire(
+                HookContext.forPreTool(context, Collections.emptyList(), call));
+        if (preResult.isBlocked()) {
+            String message = preResult.message() != null
+                    ? preResult.message() : "直接命令已被权限策略阻止。";
+            return ToolResult.error(message, 0);
         }
+
+        ToolResult result = toolDispatcher.dispatch(call);
+        hookRegistry.fire(HookContext.forPostTool(
+                context, Collections.emptyList(), call, result));
+        return result;
     }
 
     /**
@@ -490,30 +500,6 @@ public class DirectCommandExecutor {
             ui.displayError("❌ 命令执行异常: " + e.getMessage());
             e.printStackTrace();
         }
-    }
-
-    /**
-     * 检查命令是否需要确认
-     */
-    private boolean requiresConfirmation(String command) {
-        if (command == null) {
-            return false;
-        }
-        for (String sensitiveCmd : CONFIRM_REQUIRED_COMMANDS) {
-            if (command.contains(sensitiveCmd)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /**
-     * 请求用户确认
-     */
-    private boolean askForConfirmation(String command) {
-        ui.displayWarning("⚠️  即将执行敏感命令: " + command);
-        String response = ui.readInput("确认执行吗? (y/N): ");
-        return "y".equalsIgnoreCase(response) || "yes".equalsIgnoreCase(response);
     }
 
     /**

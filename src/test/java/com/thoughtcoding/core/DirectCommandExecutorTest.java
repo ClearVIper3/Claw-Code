@@ -1,8 +1,17 @@
 package com.thoughtcoding.core;
 
+import com.thoughtcoding.model.ToolResult;
+import com.thoughtcoding.tool.BaseTool;
+import com.thoughtcoding.tool.ToolRegistry;
+import com.thoughtcoding.ui.ThoughtCodingUI;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.BeforeEach;
+
+import java.util.concurrent.atomic.AtomicInteger;
+
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.*;
 
 /**
  * DirectCommandExecutor 功能测试
@@ -71,5 +80,67 @@ public class DirectCommandExecutorTest {
             System.out.println("  • " + cmd);
         }
     }
+
+    @Test
+    void 直接命令命中硬拒绝规则时不会执行工具也不会弹确认() {
+        AtomicInteger executions = new AtomicInteger();
+        Fixture fixture = fixtureWithBash(executions);
+
+        ToolResult result = fixture.executor.runBash("shutdown now");
+
+        assertFalse(result.isSuccess());
+        assertTrue(result.getError().contains("被阻止"));
+        assertEquals(0, executions.get());
+        verify(fixture.confirmation, never()).askConfirmationWithOptions(any());
+    }
+
+    @Test
+    void 直接命令被用户拒绝时不会执行注册表工具() {
+        AtomicInteger executions = new AtomicInteger();
+        Fixture fixture = fixtureWithBash(executions);
+        when(fixture.confirmation.askConfirmationWithOptions(any()))
+                .thenReturn(ToolExecutionConfirmation.ActionType.NO);
+
+        ToolResult result = fixture.executor.runBash("git status");
+
+        assertFalse(result.isSuccess());
+        assertTrue(result.getError().contains("用户拒绝"));
+        assertEquals(0, executions.get());
+    }
+
+    @Test
+    void 直接命令确认后通过统一Dispatcher执行注册表工具() {
+        AtomicInteger executions = new AtomicInteger();
+        Fixture fixture = fixtureWithBash(executions);
+        when(fixture.confirmation.askConfirmationWithOptions(any()))
+                .thenReturn(ToolExecutionConfirmation.ActionType.YES);
+
+        ToolResult result = fixture.executor.runBash("git status");
+
+        assertTrue(result.isSuccess());
+        assertEquals(1, executions.get());
+        verify(fixture.confirmation).askConfirmationWithOptions(any());
+    }
+
+    private Fixture fixtureWithBash(AtomicInteger executions) {
+        ThoughtCodingContext context = mock(ThoughtCodingContext.class);
+        ThoughtCodingUI ui = mock(ThoughtCodingUI.class);
+        ToolExecutionConfirmation confirmation = mock(ToolExecutionConfirmation.class);
+        ToolRegistry registry = new ToolRegistry(null);
+        registry.register(new BaseTool("bash", "test bash") {
+            @Override
+            public ToolResult execute(String input) {
+                executions.incrementAndGet();
+                return ToolResult.success("ok", 1);
+            }
+        });
+        when(context.getUi()).thenReturn(ui);
+        when(context.getToolRegistry()).thenReturn(registry);
+
+        return new Fixture(new DirectCommandExecutor(context, confirmation), confirmation);
+    }
+
+    private record Fixture(DirectCommandExecutor executor,
+                           ToolExecutionConfirmation confirmation) {}
 }
 

@@ -289,7 +289,7 @@ ThoughtCoding/
 `DirectCommandExecutor.java`
 
 - **功能**：直接命令执行器（处理 `/` 斜杠命令）
-- **特性**：支持直接执行系统命令；注意它自建 `BashTool` 实例，不经过 `ToolDispatcher`/`HookRegistry`/`PermissionGate`，因此直接命令路径无确认弹框与拒绝模式拦截
+- **特性**：支持直接执行系统命令；命令统一通过注册表中的 `bash` 工具执行，并复用 `HookRegistry` → `PermissionHook` → `PermissionGate` 安全管道。硬拒绝规则直接阻断，其余 shell 命令执行前独立确认；批量操作逐步确认，避免一次授权覆盖后续全部副作用
 
 ### `src/main/java/com/thoughtcoding/service/` - 服务层
 
