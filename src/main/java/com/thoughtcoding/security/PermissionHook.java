@@ -3,6 +3,7 @@ package com.thoughtcoding.security;
 import com.thoughtcoding.core.ToolExecutionConfirmation;
 import com.thoughtcoding.hook.Hook;
 import com.thoughtcoding.hook.HookContext;
+import com.thoughtcoding.hook.HookFailurePolicy;
 import com.thoughtcoding.hook.HookResult;
 import com.thoughtcoding.model.ToolCall;
 import com.thoughtcoding.model.ToolExecution;
@@ -66,5 +67,11 @@ public class PermissionHook implements Hook {
     @Override
     public String name() {
         return "PermissionCheck";
+    }
+
+    /** 权限检查自身异常时不能绕过安全控制。 */
+    @Override
+    public HookFailurePolicy failurePolicy() {
+        return HookFailurePolicy.FAIL_CLOSED;
     }
 }

@@ -16,13 +16,13 @@ import java.util.Map;
  * <ul>
  *   <li>任一动作返回 {@link HookResult.Decision#BLOCK} → 立即终止本链，返回该阻断结果；</li>
  *   <li>STOP 时机任一动作返回 {@link HookResult.Decision#CONTINUE_LOOP} → 记为「强制续跑」并终止本链；</li>
- *   <li>动作抛出异常 → 捕获并降级为放行，不中断主循环。</li>
+ *   <li>动作抛出异常 → 按动作声明的 {@link HookFailurePolicy} 放行或阻断。</li>
  * </ul>
  */
 public class HookRegistry {
 
     /** 动作及其展示名的绑定。 */
-    private record Entry(String name, Hook hook) {}
+    private record Entry(String name, Hook hook, HookFailurePolicy failurePolicy) {}
 
     private final Map<HookType, List<Entry>> hooks = new EnumMap<>(HookType.class);
 
@@ -35,13 +35,21 @@ public class HookRegistry {
 
     /** 向指定时机追加一个动作，返回自身以便链式注册。 */
     public HookRegistry register(HookType type, String name, Hook hook) {
+        return register(type, name, hook != null ? hook.failurePolicy() : null, hook);
+    }
+
+    /** 向指定时机追加一个动作，并显式指定其异常处理策略。 */
+    public HookRegistry register(HookType type, String name,
+                                 HookFailurePolicy failurePolicy, Hook hook) {
         if (type == null || hook == null) return this;
-        hooks.get(type).add(new Entry(name != null ? name : hook.name(), hook));
+        HookFailurePolicy policy = failurePolicy != null
+                ? failurePolicy : HookFailurePolicy.FAIL_OPEN;
+        hooks.get(type).add(new Entry(name != null ? name : hook.name(), hook, policy));
         return this;
     }
 
     public HookRegistry register(HookType type, Hook hook) {
-        return register(type, hook.name(), hook);
+        return register(type, hook != null ? hook.name() : null, hook);
     }
 
     /**
@@ -70,9 +78,13 @@ public class HookRegistry {
             try {
                 result = entry.hook().execute(context);
             } catch (Exception e) {
-                // 单个 hook 崩溃不应中断主循环 —— 降级为放行
-                System.err.println("⚠️ Hook 执行异常 [" + context.getType() + "/" + entry.name()
-                        + "]: " + e.getMessage());
+                String detail = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+                String message = "Hook 执行异常 [" + context.getType() + "/" + entry.name()
+                        + "]: " + detail;
+                if (entry.failurePolicy() == HookFailurePolicy.FAIL_CLOSED) {
+                    return HookResult.block(message + "；已按安全策略阻断当前操作。");
+                }
+                System.err.println("⚠️ " + message + "；已降级放行。");
                 continue;
             }
             if (result == null) continue;

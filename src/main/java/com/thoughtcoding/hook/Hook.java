@@ -3,8 +3,8 @@ package com.thoughtcoding.hook;
 /**
  * Hook 动作。给定时机触发时执行，返回 {@link HookResult} 决定是否放行/阻断/续跑。
  *
- * <p>约定：动作应尽量轻量、避免抛异常；如需阻断请返回 {@link HookResult#block}，
- * 注册表会捕获未受检异常并降级为放行（不因单个 hook 崩溃而中断主循环）。
+ * <p>约定：动作应尽量轻量、避免抛异常；如需阻断请返回 {@link HookResult#block}。
+ * 未处理异常由注册表按 {@link #failurePolicy()} 决定放行或阻断。
  */
 @FunctionalInterface
 public interface Hook {
@@ -14,5 +14,12 @@ public interface Hook {
     /** 展示名，用于日志/调试；默认取实现类简单名。 */
     default String name() {
         return getClass().getSimpleName();
+    }
+
+    /**
+     * Hook 异常时的处理策略。普通扩展默认 fail-open；权限类 Hook 应覆盖为 fail-closed。
+     */
+    default HookFailurePolicy failurePolicy() {
+        return HookFailurePolicy.FAIL_OPEN;
     }
 }

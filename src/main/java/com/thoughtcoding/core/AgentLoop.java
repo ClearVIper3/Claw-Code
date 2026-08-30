@@ -26,6 +26,8 @@ import java.util.Set;
 public class AgentLoop {
     /** 只读工具：结果回喂模型即可，不在用户端 dump 内容（避免刷屏）。 */
     private static final Set<String> QUIET_OUTPUT_TOOLS = Set.of("read", "glob", "skill");
+    /** 防止 STOP Hook 持续要求续跑导致无界循环。 */
+    static final int MAX_STOP_CONTINUATIONS = 3;
 
     private final ThoughtCodingContext context;
     private final List<ChatMessage> history;
@@ -88,8 +90,8 @@ public class AgentLoop {
             pendingToolCalls.clear();
 
             // ── Hook: UserPromptSubmit（进入 LLM 前）—— BLOCK 则跳过本轮 ──
-            HookResult promptResult = hookRegistry.fire(
-                    HookContext.forUserPrompt(context, history, input));
+            HookContext promptContext = HookContext.forUserPrompt(context, history, input);
+            HookResult promptResult = hookRegistry.fire(promptContext);
             if (promptResult.isBlocked()) {
                 context.getUi().displayWarning(promptResult.message() != null
                         ? promptResult.message() : "本轮输入已被 Hook 阻止。");
@@ -99,7 +101,7 @@ public class AgentLoop {
             // 后台子代理结论注入：在用户新输入之前插入，让模型先看到已完成任务的结论
             injectCompletedBackgroundTasks();
 
-            history.add(new ChatMessage("user", input));
+            history.add(new ChatMessage("user", promptContext.buildPromptForModel()));
 
             // 原生 function calling：多轮 agentic 循环
             runNativeToolLoop(token);
@@ -146,6 +148,7 @@ public class AgentLoop {
         int maxIter = ai != null ? ai.getMaxToolIterations() : 10;
         boolean auto = ai == null || ai.isAutoProcessToolResults();
         int iter = 0;
+        int stopContinuations = 0;
 
         while (true) {
             pendingToolCalls.clear();
@@ -164,7 +167,17 @@ public class AgentLoop {
 
             if (pendingToolCalls.isEmpty()) {
                 // ── Hook: Stop（循环即将退出）──
-                hookRegistry.fire(HookContext.forStop(context, history));
+                HookResult stopResult = hookRegistry.fire(HookContext.forStop(context, history));
+                if (stopResult.isContinueLoop()) {
+                    if (stopContinuations >= MAX_STOP_CONTINUATIONS) {
+                        context.getUi().displayWarning("⚠️  STOP Hook 本轮续跑已达上限("
+                                + MAX_STOP_CONTINUATIONS + ")，强制结束本轮。");
+                        break;
+                    }
+                    stopContinuations++;
+                    history.add(new ChatMessage("user", buildStopContinuationPrompt(stopResult)));
+                    continue;
+                }
                 break; // 模型只产出文本 → 自然终止
             }
 
@@ -290,6 +303,15 @@ public class AgentLoop {
             history.add(ChatMessage.toolResult(call.getProviderCallId(), call.getToolName(),
                     "用户已取消后续工具执行。"));
         }
+    }
+
+    /** 将 STOP Hook 的续跑原因转为下一轮模型可见的明确指令。 */
+    static String buildStopContinuationPrompt(HookResult result) {
+        String reason = result != null ? result.message() : null;
+        if (reason == null || reason.isBlank()) {
+            reason = "当前任务尚未完成，请继续执行。";
+        }
+        return "[STOP Hook 请求继续执行]\n" + reason;
     }
 
     private String describeTool(ToolCall call) {

@@ -86,7 +86,8 @@ ThoughtCoding/
 │   │   ├── Hook.java / HookContext.java # Hook 接口与上下文
 │   │   ├── HookRegistry.java            # Hook 责任链注册表
 │   │   ├── HookResult.java              # Hook 返回（PROCEED/BLOCK/…）
-│   │   └── HookType.java               # 钩子时机（UserPromptSubmit/PreToolUse/PostToolUse/Stop）
+│   │   ├── HookFailurePolicy.java       # Hook 异常策略（fail-open / fail-closed）
+│   │   └── HookType.java                # 钩子时机（UserPromptSubmit/PreToolUse/PostToolUse/Stop）
 │   ├── 📁 skill/                        # 🎯 技能注册
 │   │   └── SkillRegistry.java           # 启动时扫描 skills/ 并解析 SKILL.md
 │   ├── 📁 exception/                    # 异常定义
@@ -369,9 +370,9 @@ ThoughtCoding/
 **功能**：可扩展的拦截点责任链，权限确认的实际承载机制。
 
 - `HookType.java`：钩子时机（UserPromptSubmit / PreToolUse / PostToolUse / Stop）
-- `HookRegistry.java`：`fire(context)` 串行执行已注册 Hook，命中 BLOCK 即短路
-- `HookContext.java` / `HookResult.java`：钩子上下文与返回（PROCEED / BLOCK / …）
-- `Hook.java`：Hook 接口。业务方可按需 `register` 追加自定义动作（权限检查即作为 PreToolUse 的一环注册）
+- `HookRegistry.java`：`fire(context)` 串行执行已注册 Hook，命中 BLOCK / CONTINUE_LOOP 即短路
+- `HookContext.java` / `HookResult.java`：支持输入改写、上下文注入，以及 PROCEED / BLOCK / CONTINUE_LOOP 决策
+- `Hook.java`：Hook 接口。普通扩展异常默认 fail-open，权限 Hook 使用 fail-closed，避免检查异常时绕过安全控制
 
 ### `src/main/java/com/thoughtcoding/mcp/` - MCP 功能
 

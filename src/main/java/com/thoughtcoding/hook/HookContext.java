@@ -92,4 +92,20 @@ public class HookContext {
     public List<String> getInjectedContext() {
         return new ArrayList<>(injectedContext);
     }
+
+    /**
+     * 将 Hook 改写后的输入与附加上下文组装为最终送入模型的用户消息。
+     */
+    public String buildPromptForModel() {
+        String effectivePrompt = prompt != null ? prompt : "";
+        if (injectedContext.isEmpty()) {
+            return effectivePrompt;
+        }
+
+        String extra = String.join("\n\n", injectedContext);
+        if (effectivePrompt.isBlank()) {
+            return "[Hook 注入上下文]\n" + extra;
+        }
+        return effectivePrompt + "\n\n[Hook 注入上下文]\n" + extra;
+    }
 }
