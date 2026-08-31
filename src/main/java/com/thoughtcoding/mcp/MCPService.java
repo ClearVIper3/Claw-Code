@@ -16,7 +16,8 @@ import java.util.concurrent.ConcurrentHashMap;
 public class MCPService {
     private static final Logger log = LoggerFactory.getLogger(MCPService.class);
     private final Map<String, MCPClient> connectedServers = new ConcurrentHashMap<>();
-    private final Map<String, BaseTool> mcpTools = new ConcurrentHashMap<>(); // 改为 BaseTool
+    /** serverName → 该连接当前暴露的工具；用于断开/重连时精确回收。 */
+    private final Map<String, Map<String, BaseTool>> toolsByServer = new ConcurrentHashMap<>();
     private final Map<String, MCPClient> clients = new ConcurrentHashMap<>();
 
 
@@ -26,14 +27,12 @@ public class MCPService {
             log.debug("启动MCP服务器: {} - {}", serverName, command);
             log.debug("参数: {}", args);
 
-            // 清理旧连接
-            if (clients.containsKey(serverName)) {
-                MCPClient existingClient = clients.get(serverName);
-                if (existingClient != null && existingClient.isConnected()) {
-                    existingClient.disconnect();
-                }
-                clients.remove(serverName);
-                connectedServers.remove(serverName); // 🔥 同时清理 connectedServers
+            // 重连前先清理旧连接与工具快照；新连接失败时不会残留旧能力。
+            MCPClient existingClient = clients.remove(serverName);
+            connectedServers.remove(serverName);
+            toolsByServer.remove(serverName);
+            if (existingClient != null && existingClient.isConnected()) {
+                existingClient.disconnect();
             }
 
             MCPClient client = new MCPClient(serverName);
@@ -47,11 +46,7 @@ public class MCPService {
                 List<MCPTool> mcpToolList = client.getAvailableTools();
                 List<BaseTool> baseTools = convertToBaseTools(mcpToolList, serverName);
 
-                // 🔥 保存工具到 mcpTools 映射
-                for (int i = 0; i < mcpToolList.size(); i++) {
-                    String toolKey = mcpToolList.get(i).getName(); // 使用工具名称作为key
-                    mcpTools.put(toolKey, baseTools.get(i));
-                }
+                rememberTools(serverName, baseTools);
 
                 log.debug("✅ 成功连接MCP服务器: {} ({} 个工具)", serverName, baseTools.size());
                 return baseTools;
@@ -133,7 +128,9 @@ public class MCPService {
     }
 
     public void disconnectServer(String serverName) {
-        MCPClient client = connectedServers.remove(serverName);
+        MCPClient client = clients.remove(serverName);
+        connectedServers.remove(serverName);
+        toolsByServer.remove(serverName);
         if (client != null) {
             client.disconnect();
             log.debug("已断开MCP服务器: {}", serverName);
@@ -145,7 +142,35 @@ public class MCPService {
     }
 
     public Map<String, BaseTool> getMCPTools() {
-        return new HashMap<>(mcpTools);
+        Map<String, BaseTool> flattened = new LinkedHashMap<>();
+        toolsByServer.forEach((server, serverTools) -> serverTools.forEach((name, tool) -> {
+            String displayName = flattened.containsKey(name) ? server + "/" + name : name;
+            flattened.put(displayName, tool);
+        }));
+        return flattened;
+    }
+
+    public List<BaseTool> getToolsForServer(String serverName) {
+        Map<String, BaseTool> serverTools = toolsByServer.get(serverName);
+        return serverTools == null ? Collections.emptyList() : new ArrayList<>(serverTools.values());
+    }
+
+    public int getMCPToolCount() {
+        return toolsByServer.values().stream().mapToInt(Map::size).sum();
+    }
+
+    /** 保存某连接的最新工具快照；包级可见以便生命周期测试。 */
+    void rememberTools(String serverName, List<BaseTool> tools) {
+        if (serverName == null || serverName.isBlank()) return;
+        Map<String, BaseTool> snapshot = new LinkedHashMap<>();
+        if (tools != null) {
+            for (BaseTool tool : tools) {
+                if (tool != null && tool.getName() != null && !tool.getName().isBlank()) {
+                    snapshot.put(tool.getName(), tool);
+                }
+            }
+        }
+        toolsByServer.put(serverName, Map.copyOf(snapshot));
     }
 
     public void shutdown() {

@@ -3,6 +3,7 @@ package com.thoughtcoding.tool;
 import com.thoughtcoding.config.AppConfig;
 
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 负责工具注册、发现和生命周期管理
@@ -10,23 +11,85 @@ import java.util.*;
  * 工具系统的核心管理者，维护了所有可用工具的映射表，并提供统一的调用接口，
  */
 public class ToolRegistry {
-    private final Map<String, BaseTool> tools;
+    public static final String APPLICATION_OWNER = "application";
+
+    private record RegisteredTool(String owner, BaseTool tool) {}
+
+    private final Map<String, RegisteredTool> tools;
     private final AppConfig appConfig;
 
     public ToolRegistry(AppConfig appConfig) {
-        this.tools = new HashMap<>();
+        this.tools = new ConcurrentHashMap<>();
         this.appConfig = appConfig;
     }
 
     // 🔥 统一注册入口，接受 BaseTool（内置工具与 MCP 工具共用）
-    public void register(BaseTool tool) {
-        if (isToolEnabled(tool.getName())) {
-            tools.put(tool.getName(), tool);
+    public boolean register(BaseTool tool) {
+        return register(APPLICATION_OWNER, tool);
+    }
+
+    /**
+     * 按所有者注册工具。同一所有者可刷新同名工具；不同所有者发生重名时拒绝覆盖，
+     * 防止 MCP 工具替换内置工具或另一个服务器的能力。
+     */
+    public boolean register(String owner, BaseTool tool) {
+        if (tool == null || tool.getName() == null || tool.getName().isBlank()
+                || owner == null || owner.isBlank() || !isToolEnabled(tool.getName())) {
+            return false;
         }
+
+        RegisteredTool incoming = new RegisteredTool(owner, tool);
+        RegisteredTool resolved = tools.compute(tool.getName(), (name, existing) -> {
+            if (existing == null || existing.owner().equals(owner)) {
+                return incoming;
+            }
+            return existing;
+        });
+        return resolved == incoming;
     }
 
     public BaseTool getTool(String toolName) {
-        return tools.get(toolName);
+        RegisteredTool registered = tools.get(toolName);
+        return registered != null ? registered.tool() : null;
+    }
+
+    /** 删除某个所有者注册的全部工具，返回实际删除数量。 */
+    public int unregisterOwner(String owner) {
+        if (owner == null || owner.isBlank()) return 0;
+        return unregisterMatching(registered -> owner.equals(registered.owner()));
+    }
+
+    /** 删除所有者前缀匹配的工具（用于应用关闭时批量回收 MCP 能力）。 */
+    public int unregisterOwnersWithPrefix(String ownerPrefix) {
+        if (ownerPrefix == null || ownerPrefix.isBlank()) return 0;
+        return unregisterMatching(registered -> registered.owner().startsWith(ownerPrefix));
+    }
+
+    public int countOwnersWithPrefix(String ownerPrefix) {
+        if (ownerPrefix == null || ownerPrefix.isBlank()) return 0;
+        return (int) tools.values().stream()
+                .filter(registered -> registered.owner().startsWith(ownerPrefix))
+                .count();
+    }
+
+    public String ownerOf(String toolName) {
+        RegisteredTool registered = tools.get(toolName);
+        return registered != null ? registered.owner() : null;
+    }
+
+    public int size() {
+        return tools.size();
+    }
+
+    private int unregisterMatching(java.util.function.Predicate<RegisteredTool> predicate) {
+        int removed = 0;
+        for (Map.Entry<String, RegisteredTool> entry : tools.entrySet()) {
+            RegisteredTool registered = entry.getValue();
+            if (predicate.test(registered) && tools.remove(entry.getKey(), registered)) {
+                removed++;
+            }
+        }
+        return removed;
     }
 
     /**
@@ -35,9 +98,11 @@ public class ToolRegistry {
      */
     public java.util.List<dev.langchain4j.agent.tool.ToolSpecification> getToolSpecifications() {
         java.util.List<dev.langchain4j.agent.tool.ToolSpecification> specs = new ArrayList<>();
-        for (BaseTool tool : tools.values()) {
+        // ConcurrentHashMap 的弱一致性快照：动态注册/回收不会导致遍历异常，
+        // 单次模型请求看到注册前或注册后的完整工具对象，下一轮自然刷新。
+        for (RegisteredTool registered : new ArrayList<>(tools.values())) {
             try {
-                specs.add(ToolSpecificationFactory.build(tool));
+                specs.add(ToolSpecificationFactory.build(registered.tool()));
             } catch (Exception e) {
                 // 跳过无法生成 spec 的工具
             }

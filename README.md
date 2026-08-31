@@ -326,7 +326,7 @@ ThoughtCoding/
 `ToolRegistry.java`
 
 - **功能**：工具注册中心
-- **特性**：`register(BaseTool)` 按 `tools.<name>.enabled` 开关过滤；`getToolSpecifications()` 在每次请求时遍历已启用工具生成 `ToolSpecification` 列表（含运行期连接的 MCP 工具），单个转换失败则静默跳过
+- **特性**：基于 `ConcurrentHashMap` 支持运行期安全刷新工具清单；`register(owner, tool)` 记录能力来源，同一 owner 可重连刷新，不同 owner 的同名工具拒绝覆盖；断开 MCP 时按 owner 精确回收，避免模型继续看到已经失效的工具。`getToolSpecifications()` 每次请求读取当前快照，单个转换失败则静默跳过
 
 `ToolDispatcher.java`
 
@@ -398,7 +398,7 @@ context.getHookRegistry().register(HookType.POST_TOOL_USE, hookContext -> {
 `MCPService.java` - MCP 服务管理器
 
 - **功能**: MCP 服务的核心管理器
-- **特性**: 管理多个 MCP 服务器连接，统一工具注册
+- **特性**: 管理多个 MCP 服务器连接，并按 server 保存工具快照；重连先清理旧快照，断开时同步回收该 server 的全部工具，避免动态工具泄漏或重复累积
 
 `MCPClient.java` - MCP 客户端
 

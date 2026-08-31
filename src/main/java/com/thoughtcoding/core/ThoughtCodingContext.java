@@ -37,6 +37,7 @@ import java.util.List;
  * 资源配置：建立数据库连接、网络连接、文件句柄等
  */
 public class ThoughtCodingContext {
+    private static final String MCP_OWNER_PREFIX = "mcp:";
     private final AppConfig appConfig;
     private final MCPConfig mcpConfig;
     private final AIService aiService;
@@ -191,11 +192,9 @@ public class ThoughtCodingContext {
                         );
 
                         if (!tools.isEmpty()) {
-                            // 注册工具（静默）
-                            for (var tool : tools) {
-                                toolRegistry.register(tool);
-                            }
-                            totalTools += tools.size();
+                            int registered = registerMCPTools(
+                                    toolRegistry, serverConfig.getName(), tools);
+                            totalTools += registered;
                             successServers++;
                             connectedServers.add(serverConfig.getName());
                         }
@@ -222,15 +221,18 @@ public class ThoughtCodingContext {
         }
 
         try {
+            toolRegistry.unregisterOwner(mcpOwner(serverName));
             // 🔥 直接传递三个参数，不再创建 Map
             var tools = mcpService.connectToServer(serverName, command, args);
             if (!tools.isEmpty()) {
-                // 注册工具（静默）
-                for (var tool : tools) {
-                    toolRegistry.register(tool);
+                int registered = registerMCPTools(toolRegistry, serverName, tools);
+                if (registered == 0) {
+                    mcpService.disconnectServer(serverName);
+                    System.err.println("✗ MCP 工具与现有能力重名，已拒绝覆盖并断开: " + serverName);
+                    return false;
                 }
                 System.out.println("✓ 成功连接 MCP 服务器: " + serverName +
-                        " (" + tools.size() + " 个工具)");
+                        " (" + registered + " 个工具)");
                 return true;
             }
         } catch (Exception e) {
@@ -252,15 +254,19 @@ public class ThoughtCodingContext {
 
         try {
             var toolNames = java.util.Arrays.asList(toolsList.split(","));
-            var tools = mcpToolManager.connectPredefinedTools(toolNames);
-            if (!tools.isEmpty()) {
-                // 注册工具（静默）
-                for (var tool : tools) {
-                    toolRegistry.register(tool);
-                }
+            for (String toolName : toolNames) {
+                toolRegistry.unregisterOwner(mcpOwner("predefined-" + toolName.trim()));
             }
-            System.out.println("✓ 已连接 " + tools.size() + " 个预定义 MCP 工具");
-            return !tools.isEmpty();
+            mcpToolManager.connectPredefinedTools(toolNames);
+
+            int registered = 0;
+            for (String toolName : toolNames) {
+                String serverName = "predefined-" + toolName.trim();
+                registered += registerMCPTools(
+                        toolRegistry, serverName, mcpService.getToolsForServer(serverName));
+            }
+            System.out.println("✓ 已连接 " + registered + " 个预定义 MCP 工具");
+            return registered > 0;
         } catch (Exception e) {
             System.err.println("✗ 连接预定义 MCP 工具失败: " + e.getMessage());
             return false;
@@ -273,6 +279,7 @@ public class ThoughtCodingContext {
     public void disconnectMCPServer(String serverName) {
         if (mcpService != null) {
             mcpService.disconnectServer(serverName);
+            toolRegistry.unregisterOwner(mcpOwner(serverName));
             System.out.println("✓ 已断开 MCP 服务器: " + serverName);
         }
     }
@@ -308,6 +315,9 @@ public class ThoughtCodingContext {
         if (mcpToolManager != null) {
             mcpToolManager.shutdown();
         }
+        if (toolRegistry != null) {
+            toolRegistry.unregisterOwnersWithPrefix(MCP_OWNER_PREFIX);
+        }
         System.out.println("MCP 服务已关闭");
     }
 
@@ -334,7 +344,28 @@ public class ThoughtCodingContext {
         return mcpConfig != null && mcpConfig.isEnabled();
     }
     public int getMCPToolCount() {
-        return mcpService != null ? mcpService.getMCPTools().size() : 0;
+        return toolRegistry != null
+                ? toolRegistry.countOwnersWithPrefix(MCP_OWNER_PREFIX)
+                : 0;
+    }
+
+    private static String mcpOwner(String serverName) {
+        return MCP_OWNER_PREFIX + serverName;
+    }
+
+    private static int registerMCPTools(ToolRegistry registry, String serverName,
+                                        List<BaseTool> tools) {
+        if (registry == null || serverName == null || tools == null) return 0;
+        int registered = 0;
+        for (BaseTool tool : tools) {
+            if (registry.register(mcpOwner(serverName), tool)) {
+                registered++;
+            } else if (tool != null) {
+                System.err.println("⚠️  跳过重名 MCP 工具 " + serverName + "/" + tool.getName()
+                        + "，现有所有者: " + registry.ownerOf(tool.getName()));
+            }
+        }
+        return registered;
     }
 
     // Builder模式
