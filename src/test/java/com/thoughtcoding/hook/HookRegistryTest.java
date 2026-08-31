@@ -16,7 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class HookRegistryTest {
 
     @Test
-    void 用户输入Hook可改写Prompt并按注册顺序注入上下文() {
+    void shouldApplyPromptRewriteAndContextInjectionInRegistrationOrder() {
         List<ChatMessage> history = new ArrayList<>();
         HookContext context = HookContext.forUserPrompt(null, history, "原始问题");
         HookRegistry registry = new HookRegistry()
@@ -38,7 +38,7 @@ class HookRegistryTest {
     }
 
     @Test
-    void 阻断结果会终止后续Hook() {
+    void shouldStopExecutingRemainingHooksWhenBlocked() {
         AtomicBoolean laterExecuted = new AtomicBoolean(false);
         HookRegistry registry = new HookRegistry()
                 .register(HookType.USER_PROMPT_SUBMIT, "block", context -> HookResult.block("拒绝"))
@@ -55,7 +55,7 @@ class HookRegistryTest {
     }
 
     @Test
-    void 普通Hook异常时FailOpen并继续动作链() {
+    void shouldFailOpenAndContinueChainWhenRegularHookThrows() {
         AtomicBoolean laterExecuted = new AtomicBoolean(false);
         HookRegistry registry = new HookRegistry()
                 .register(HookType.POST_TOOL_USE, "broken", context -> {
@@ -73,7 +73,7 @@ class HookRegistryTest {
     }
 
     @Test
-    void 安全Hook异常时FailClosed并终止动作链() {
+    void shouldFailClosedAndStopChainWhenSecurityHookThrows() {
         AtomicBoolean laterExecuted = new AtomicBoolean(false);
         Hook brokenSecurityHook = new Hook() {
             @Override
@@ -101,13 +101,13 @@ class HookRegistryTest {
     }
 
     @Test
-    void PermissionHook声明FailClosed() {
+    void shouldDeclarePermissionHookAsFailClosed() {
         assertEquals(HookFailurePolicy.FAIL_CLOSED,
                 new PermissionHook(null).failurePolicy());
     }
 
     @Test
-    void StopHook可返回续跑决策() {
+    void shouldAllowStopHookToRequestAnotherLoopIteration() {
         HookRegistry registry = new HookRegistry()
                 .register(HookType.STOP, context -> HookResult.continueLoop("还需验证测试"));
 
@@ -118,7 +118,7 @@ class HookRegistryTest {
     }
 
     @Test
-    void 派生Registry继承应用Hook但后续注册彼此隔离() {
+    void shouldInheritApplicationHooksWhileKeepingDerivedRegistrationsIsolated() {
         AtomicInteger sharedExecutions = new AtomicInteger();
         HookRegistry application = new HookRegistry()
                 .register(HookType.POST_TOOL_USE, context -> {
@@ -137,7 +137,7 @@ class HookRegistryTest {
     }
 
     @Test
-    void registerFirst确保安全Hook先于业务Hook执行() {
+    void shouldRunSecurityHookBeforeBusinessHooksWhenRegisteredFirst() {
         List<String> order = new ArrayList<>();
         HookRegistry registry = new HookRegistry()
                 .register(HookType.PRE_TOOL_USE, "business", context -> {

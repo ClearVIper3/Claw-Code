@@ -12,14 +12,14 @@ import static org.junit.jupiter.api.Assertions.*;
 class CancelTokenTest {
 
     @Test
-    void 初始状态未取消_check不抛异常() {
+    void shouldStartNotCancelledAndAllowCheck() {
         CancelToken token = new CancelToken();
         assertFalse(token.isCancelled());
         assertDoesNotThrow(token::check);
     }
 
     @Test
-    void 取消后check抛出CancelledException() {
+    void shouldThrowCancelledExceptionAfterCancellation() {
         CancelToken token = new CancelToken();
         token.cancel();
         assertTrue(token.isCancelled());
@@ -27,7 +27,7 @@ class CancelTokenTest {
     }
 
     @Test
-    void 取消触发所有已注册回调() {
+    void shouldInvokeAllRegisteredCallbacksOnCancellation() {
         CancelToken token = new CancelToken();
         AtomicInteger fired = new AtomicInteger();
         token.onCancel(fired::incrementAndGet);
@@ -38,7 +38,7 @@ class CancelTokenTest {
     }
 
     @Test
-    void 取消幂等_回调只触发一次() {
+    void shouldInvokeCallbacksOnlyOnceWhenCancelledRepeatedly() {
         CancelToken token = new CancelToken();
         AtomicInteger fired = new AtomicInteger();
         token.onCancel(fired::incrementAndGet);
@@ -50,7 +50,7 @@ class CancelTokenTest {
     }
 
     @Test
-    void 已取消后注册的回调立即执行() {
+    void shouldInvokeCallbackImmediatelyWhenRegisteredAfterCancellation() {
         CancelToken token = new CancelToken();
         token.cancel();
 
@@ -60,7 +60,7 @@ class CancelTokenTest {
     }
 
     @Test
-    void 单个回调异常不影响其余回调() {
+    void shouldContinueInvokingCallbacksWhenOneCallbackFails() {
         CancelToken token = new CancelToken();
         AtomicInteger fired = new AtomicInteger();
         token.onCancel(() -> { throw new RuntimeException("boom"); });
@@ -71,7 +71,7 @@ class CancelTokenTest {
     }
 
     @Test
-    void 注册与取消并发竞争_回调恰好执行一次() throws InterruptedException {
+    void shouldInvokeCallbackExactlyOnceDuringConcurrentRegistrationAndCancellation() throws InterruptedException {
         for (int round = 0; round < 200; round++) {
             CancelToken token = new CancelToken();
             AtomicInteger fired = new AtomicInteger();

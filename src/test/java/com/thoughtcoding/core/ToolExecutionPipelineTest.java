@@ -22,7 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class ToolExecutionPipelineTest {
 
     @Test
-    void 成功调用按Pre执行Post顺序推进并写入一条配对结果() {
+    void shouldRunPreThenPostHookAndAppendSinglePairedResultOnSuccess() {
         List<String> events = new ArrayList<>();
         ToolRegistry tools = registryWith("echo", input -> {
             events.add("tool");
@@ -52,7 +52,7 @@ class ToolExecutionPipelineTest {
     }
 
     @Test
-    void PreHook阻断时不执行工具和PostHook但仍写入配对结果() {
+    void shouldSkipToolAndPostHookButAppendPairedResultWhenPreHookBlocks() {
         AtomicInteger toolExecutions = new AtomicInteger();
         AtomicInteger postExecutions = new AtomicInteger();
         ToolRegistry tools = registryWith("write", input -> {
@@ -80,7 +80,7 @@ class ToolExecutionPipelineTest {
     }
 
     @Test
-    void 工具失败仍触发PostHook并以统一格式回喂() {
+    void shouldRunPostHookAndReturnNormalizedResultWhenToolFails() {
         AtomicInteger postExecutions = new AtomicInteger();
         ToolRegistry tools = registryWith("bash",
                 input -> ToolResult.error("退出码 1", 2));

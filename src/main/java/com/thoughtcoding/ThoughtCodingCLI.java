@@ -21,16 +21,16 @@ public class ThoughtCodingCLI {
             System.exit(1);
         });
 
-        // 创建并初始化应用上下文
-        ThoughtCodingContext context = ThoughtCodingContext.initialize();
-
-        // 设置Picocli命令解析器，注册所有命令
-        CommandLine commandLine = new CommandLine(new ThoughtCodingCommand(context));
-        commandLine.addSubcommand("session", new SessionCommand(context));
-        commandLine.addSubcommand("config", new ConfigCommand(context));
-
-        // 执行命令解析和路由
-        int exitCode = commandLine.execute(args);
+        int exitCode = 1;
+        // Context 是应用级资源边界；无论正常返回、命令异常还是参数解析失败都会关闭。
+        try (ThoughtCodingContext context = ThoughtCodingContext.initialize()) {
+            CommandLine commandLine = new CommandLine(new ThoughtCodingCommand(context));
+            commandLine.addSubcommand("session", new SessionCommand(context));
+            commandLine.addSubcommand("config", new ConfigCommand(context));
+            exitCode = commandLine.execute(args);
+        } catch (Exception e) {
+            System.err.println("💥 应用运行失败: " + e.getMessage());
+        }
         System.exit(exitCode);
     }
 }

@@ -18,6 +18,18 @@ public interface AIService {
     boolean validateModel(String modelName);
     List<String> getAvailableModels();
 
+    /** 当前是否存在可取消的主 Agent 流式生成。 */
+    default boolean isGenerating() {
+        return false;
+    }
+
+    /**
+     * 请求停止当前主 Agent 生成。默认实现为空，具体 provider 可覆盖；
+     * Runtime 关闭时通过接口调用，不依赖某个 AIService 实现类。
+     */
+    default void stopCurrentGeneration() {
+    }
+
     /**
      * 🔥 子Agent专用：一次「隔离」的模型往返，不触碰共享的 messageHandler/toolCallHandler/生成状态。
      *

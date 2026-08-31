@@ -18,7 +18,7 @@ import java.util.List;
 /**
  * ThoughtCodingUI 类，管理终端用户界面和交互
  */
-public class ThoughtCodingUI {
+public class ThoughtCodingUI implements AutoCloseable {
     private final Terminal terminal;
     private final LineReader lineReader;
     private final ChatRenderer chatRenderer;
@@ -285,6 +285,7 @@ public class ThoughtCodingUI {
         }
     }
 
+    @Override
     public void close() {
         try {
             if (terminal != null) {

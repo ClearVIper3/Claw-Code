@@ -18,7 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class ToolRegistryLifecycleTest {
 
     @Test
-    void 不同所有者的同名工具不能覆盖内置能力() {
+    void shouldPreventDifferentOwnerFromOverridingBuiltInTool() {
         ToolRegistry registry = new ToolRegistry(null);
         BaseTool builtIn = tool("read");
         BaseTool mcpTool = tool("read");
@@ -33,7 +33,7 @@ class ToolRegistryLifecycleTest {
     }
 
     @Test
-    void 同一所有者重连时可以刷新工具实例() {
+    void shouldRefreshToolInstanceWhenSameOwnerReconnects() {
         ToolRegistry registry = new ToolRegistry(null);
         BaseTool oldTool = tool("search");
         BaseTool refreshedTool = tool("search");
@@ -46,7 +46,7 @@ class ToolRegistryLifecycleTest {
     }
 
     @Test
-    void 断开服务器只回收属于该服务器的工具() {
+    void shouldRemoveOnlyToolsOwnedByDisconnectedServer() {
         ToolRegistry registry = new ToolRegistry(null);
         registry.register(tool("bash"));
         registry.register("mcp:server-a", tool("a1"));
@@ -64,7 +64,7 @@ class ToolRegistryLifecycleTest {
     }
 
     @Test
-    void 动态注册回收与模型读取工具清单可以并发执行() {
+    void shouldSupportConcurrentRegistrationRemovalAndSpecificationReads() {
         ToolRegistry registry = new ToolRegistry(null);
         registry.register(tool("read"));
         List<CompletableFuture<Void>> tasks = new ArrayList<>();

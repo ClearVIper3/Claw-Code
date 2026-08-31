@@ -47,7 +47,7 @@ class WorktreeManagerTest {
     }
 
     @Test
-    void 有改动时保存独立分支且不修改主工作区() {
+    void shouldSaveChangesOnIsolatedBranchWithoutModifyingMainWorkspace() {
         WorktreeManager manager = manager();
 
         WorktreeManager.RunResult result = manager.run("修改示例", () -> {
@@ -71,7 +71,7 @@ class WorktreeManagerTest {
     }
 
     @Test
-    void 无改动时自动清理临时分支() {
+    void shouldRemoveTemporaryBranchWhenTaskProducesNoChanges() {
         WorktreeManager manager = manager();
 
         WorktreeManager.RunResult result = manager.run("只读检查", () -> {
@@ -87,7 +87,7 @@ class WorktreeManagerTest {
     }
 
     @Test
-    void 主工作区不干净时拒绝基于过期HEAD执行() throws Exception {
+    void shouldRejectExecutionWhenMainWorkspaceHasUncommittedChanges() throws Exception {
         Files.writeString(repository.resolve("sample.txt"), "uncommitted\n", StandardCharsets.UTF_8);
         WorktreeManager manager = manager();
 
@@ -101,7 +101,7 @@ class WorktreeManagerTest {
     }
 
     @Test
-    void 子代理自行提交后仍会保留分支而非误判无改动() throws Exception {
+    void shouldPreserveBranchWhenSubAgentCreatesItsOwnCommit() throws Exception {
         WorktreeManager manager = manager();
 
         WorktreeManager.RunResult result = manager.run("自行提交", () -> {
@@ -120,7 +120,7 @@ class WorktreeManagerTest {
     }
 
     @Test
-    void 并行子代理拥有互不干扰的线程级workspace和分支() throws Exception {
+    void shouldIsolateWorkspaceAndBranchAcrossParallelSubAgents() throws Exception {
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
             List<Callable<WorktreeManager.RunResult>> tasks = List.of(
                     () -> runParallelChange("agent-a.txt", "A\n"),
@@ -143,7 +143,7 @@ class WorktreeManagerTest {
     }
 
     @Test
-    void 未合并任务默认拒绝清理但force可显式删除() {
+    void shouldPreserveUnmergedTaskUnlessForceCleanupIsRequested() {
         WorktreeManager manager = manager();
         WorktreeManager.RunResult result = manager.run("待审查", () -> {
             Files.writeString(Sandbox.resolve("review.txt"), "review\n", StandardCharsets.UTF_8);
@@ -164,7 +164,7 @@ class WorktreeManagerTest {
     }
 
     @Test
-    void force不允许在未指定任务时批量删除() {
+    void shouldRejectForceCleanupWithoutSpecificTask() {
         WorktreeManager.WorktreeException error = assertThrows(
                 WorktreeManager.WorktreeException.class,
                 () -> manager().cleanup(new WorktreeManager.CleanupOptions(null, null, true)));
@@ -172,7 +172,7 @@ class WorktreeManagerTest {
     }
 
     @Test
-    void 分支合并后默认cleanup会安全回收() {
+    void shouldCleanUpTaskAfterItsBranchIsMerged() {
         WorktreeManager manager = manager();
         WorktreeManager.RunResult result = manager.run("可合并", () -> {
             Files.writeString(Sandbox.resolve("merged.txt"), "merged\n", StandardCharsets.UTF_8);
@@ -191,7 +191,7 @@ class WorktreeManagerTest {
     }
 
     @Test
-    void 启动巡检会导入旧版未登记的subagent分支() {
+    void shouldImportUntrackedLegacySubAgentBranchesDuringStartupAudit() {
         String branch = "thoughtcoding/subagent/legacy-task";
         git(repository, "branch", branch, "HEAD");
 
@@ -205,7 +205,7 @@ class WorktreeManagerTest {
     }
 
     @Test
-    void 启动巡检会把上次未结束的running记录标为stale() throws Exception {
+    void shouldMarkInterruptedRunningTaskAsStaleDuringStartupAudit() throws Exception {
         WorktreeManager manager = manager();
         manager.run("模拟崩溃", () -> {
             Files.writeString(Sandbox.resolve("crash.txt"), "crash\n", StandardCharsets.UTF_8);
@@ -227,7 +227,7 @@ class WorktreeManagerTest {
     }
 
     @Test
-    void 启动巡检会提示超过七天仍未合并的分支() throws Exception {
+    void shouldReportUnmergedBranchesOlderThanSevenDaysDuringStartupAudit() throws Exception {
         WorktreeManager manager = manager();
         manager.run("长期未合并", () -> {
             Files.writeString(Sandbox.resolve("aged.txt"), "aged\n", StandardCharsets.UTF_8);

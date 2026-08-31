@@ -26,6 +26,7 @@ import com.thoughtcoding.ui.ThoughtCodingUI;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * 上下文初始化过程
@@ -36,7 +37,7 @@ import java.util.List;
  *
  * 资源配置：建立数据库连接、网络连接、文件句柄等
  */
-public class ThoughtCodingContext {
+public class ThoughtCodingContext implements AutoCloseable {
     private static final String MCP_OWNER_PREFIX = "mcp:";
     private final AppConfig appConfig;
     private final MCPConfig mcpConfig;
@@ -57,6 +58,10 @@ public class ThoughtCodingContext {
 
     // 并行/后台子代理调度器（虚拟线程 + Semaphore 限流）
     private final SubAgentExecutor subAgentExecutor;
+
+    /** Context 是应用级资源所有者；关闭操作允许从多个退出路径安全重复调用。 */
+    private final AtomicBoolean closed = new AtomicBoolean(false);
+    private final AtomicBoolean mcpShutdown = new AtomicBoolean(false);
 
     // 终端输入路由器（回合后台化后 agent 线程确认框的输入来源；由 AgentTurnRunner 构造时注册）
     private volatile ConsoleInputRouter consoleInputRouter;
@@ -129,11 +134,6 @@ public class ThoughtCodingContext {
             toolRegistry.register(new SkillTool(skillRegistry));
         }
 
-        // 🔥 初始化 MCP 服务（如果启用）
-        if (mcpConfig != null && mcpConfig.isEnabled()) {
-            initializeMCPTools(mcpConfig, mcpService, toolRegistry);
-        }
-
         // 服务层初始化
         ContextManager contextManager = new ContextManager(appConfig, skillRegistry);  // 🔥 创建上下文管理器
         AIService aiService = new LangChainService(appConfig, toolRegistry, contextManager);  // 🔥 注入 contextManager
@@ -163,11 +163,20 @@ public class ThoughtCodingContext {
                 .subAgentExecutor(subAgentExecutor)
                 .build();
 
-        // 🔥 子Agent 工具（subAgent）：需持有已构建好的 context 引用来派生隔离子循环，故在 build 之后注册。
-        // toolRegistry 是同一可变实例，LangChainService 每次请求都重新读 getToolSpecifications()，能看见它。
-        context.getToolRegistry().register(new SubAgentTool(context));
+        try {
+            // 子Agent 工具需持有已构建好的 context；ToolRegistry 是同一可变实例，
+            // LangChainService 每次请求都会读取最新 ToolSpecification。
+            context.getToolRegistry().register(new SubAgentTool(context));
 
-        return context;
+            // 外部进程连接放在 Context 构建之后；后续初始化若失败，可由 close() 统一回收。
+            if (mcpConfig != null && mcpConfig.isEnabled()) {
+                initializeMCPTools(mcpConfig, mcpService, toolRegistry);
+            }
+            return context;
+        } catch (RuntimeException | Error e) {
+            context.close();
+            throw e;
+        }
     }
 
     /**
@@ -309,16 +318,55 @@ public class ThoughtCodingContext {
      * 🔥 关闭 MCP 服务
      */
     public void shutdownMCP() {
-        if (mcpService != null) {
-            mcpService.shutdown();
+        if (!mcpShutdown.compareAndSet(false, true)) return;
+        closeSafely("MCP 工具管理器", () -> {
+            if (mcpToolManager != null) mcpToolManager.shutdown();
+        });
+        closeSafely("MCP 服务", () -> {
+            if (mcpService != null) mcpService.shutdown();
+        });
+        closeSafely("MCP 工具注册", () -> {
+            if (toolRegistry != null) {
+                toolRegistry.unregisterOwnersWithPrefix(MCP_OWNER_PREFIX);
+            }
+        });
+    }
+
+    /**
+     * 统一关闭应用级 Runtime 资源。顺序遵循“先停止生产者，再关闭依赖”：
+     * 取消确认等待和模型生成 → 停止后台 SubAgent → 断开 MCP → 关闭终端。
+     */
+    @Override
+    public void close() {
+        if (!closed.compareAndSet(false, true)) return;
+
+        ConsoleInputRouter router = consoleInputRouter;
+        consoleInputRouter = null;
+        closeSafely("确认输入路由", () -> {
+            if (router != null) router.cancelPending();
+        });
+        closeSafely("AI 生成", () -> {
+            if (aiService != null) aiService.stopCurrentGeneration();
+        });
+        closeSafely("SubAgent 调度器", () -> {
+            if (subAgentExecutor != null) subAgentExecutor.shutdown();
+        });
+        shutdownMCP();
+        closeSafely("终端", () -> {
+            if (ui != null) ui.close();
+        });
+    }
+
+    public boolean isClosed() {
+        return closed.get();
+    }
+
+    private static void closeSafely(String resourceName, Runnable action) {
+        try {
+            action.run();
+        } catch (Exception e) {
+            System.err.println("⚠️  关闭" + resourceName + "失败: " + e.getMessage());
         }
-        if (mcpToolManager != null) {
-            mcpToolManager.shutdown();
-        }
-        if (toolRegistry != null) {
-            toolRegistry.unregisterOwnersWithPrefix(MCP_OWNER_PREFIX);
-        }
-        System.out.println("MCP 服务已关闭");
     }
 
     // Getter方法

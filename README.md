@@ -391,6 +391,8 @@ context.getHookRegistry().register(HookType.POST_TOOL_USE, hookContext -> {
 
 主 Agent、每个 SubAgent 和直接命令执行器在创建时都会复制应用级动作链，再把各自的 `PermissionHook` 前置注册。动作链列表相互隔离，Hook 实例共享，因此局部注册不会串扰，同时审计/指标 Hook 可以聚合全局状态。应用级 Hook 应在对应 Runtime 创建前完成注册；带可变状态的 Hook 必须自行保证线程安全。
 
+`ThoughtCodingContext` 同时是应用级资源边界并实现 `AutoCloseable`：退出时按“停止确认/生成 → 取消后台 SubAgent → 断开 MCP → 关闭终端”的顺序幂等回收。交互模式的 `AgentTurnRunner` 属于命令级作用域，在自身 `finally` 中关闭；最外层 CLI 使用 try-with-resources，正常退出、异常退出和参数解析失败共用同一条清理路径。
+
 ### `src/main/java/com/thoughtcoding/mcp/` - MCP 功能
 
 **功能**: 实现 Model Context Protocol 客户端功能，连接和管理外部 MCP 服务器

@@ -9,7 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class AgentLoopHookTest {
 
     @Test
-    void Stop续跑原因会转为模型可见指令() {
+    void shouldConvertStopContinuationReasonIntoModelInstruction() {
         String prompt = AgentLoop.buildStopContinuationPrompt(
                 HookResult.continueLoop("请先运行完整测试"));
 
@@ -18,7 +18,7 @@ class AgentLoopHookTest {
     }
 
     @Test
-    void Stop续跑原因为空时使用默认指令() {
+    void shouldUseDefaultInstructionWhenStopContinuationReasonIsBlank() {
         String prompt = AgentLoop.buildStopContinuationPrompt(
                 HookResult.continueLoop("  "));
 

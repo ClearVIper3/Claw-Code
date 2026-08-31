@@ -24,7 +24,7 @@ class ToolDispatcherTest {
     private final ToolDispatcher dispatcher = new ToolDispatcher(registry);
 
     @Test
-    void 正常调用会序列化参数并返回工具结果() throws Exception {
+    void shouldSerializeArgumentsAndReturnToolResult() throws Exception {
         AtomicReference<String> receivedInput = new AtomicReference<>();
         registry.register(new StubTool("echo", input -> {
             receivedInput.set(input);
@@ -39,7 +39,7 @@ class ToolDispatcherTest {
     }
 
     @Test
-    void 工具运行时异常会收敛为失败结果而不逃逸() {
+    void shouldConvertToolRuntimeExceptionIntoFailureResult() {
         registry.register(new StubTool("broken", input -> {
             throw new IllegalStateException("boom");
         }));
@@ -53,7 +53,7 @@ class ToolDispatcherTest {
     }
 
     @Test
-    void 工具空返回会收敛为失败结果() {
+    void shouldConvertNullToolResponseIntoFailureResult() {
         registry.register(new StubTool("empty", input -> null));
 
         ToolResult result = dispatcher.dispatch(call("empty", Map.of()));
@@ -63,7 +63,7 @@ class ToolDispatcherTest {
     }
 
     @Test
-    void 取消异常会收敛为当前调用的失败结果() {
+    void shouldConvertCancellationIntoFailureResultForCurrentCall() {
         registry.register(new BaseTool("cancellable", "test") {
             @Override
             public ToolResult execute(String input) {
@@ -86,7 +86,7 @@ class ToolDispatcherTest {
     }
 
     @Test
-    void 参数序列化失败会收敛为失败结果且不调用工具() {
+    void shouldReturnFailureWithoutInvokingToolWhenArgumentSerializationFails() {
         AtomicReference<String> receivedInput = new AtomicReference<>();
         registry.register(new StubTool("echo", input -> {
             receivedInput.set(input);
@@ -103,7 +103,7 @@ class ToolDispatcherTest {
     }
 
     @Test
-    void 非法或未知调用也始终返回失败结果() {
+    void shouldReturnFailureForInvalidOrUnknownToolCalls() {
         assertFalse(dispatcher.dispatch(null).isSuccess());
         assertFalse(dispatcher.dispatch(call(null, Map.of())).isSuccess());
         assertFalse(dispatcher.dispatch(call("missing", Map.of())).isSuccess());

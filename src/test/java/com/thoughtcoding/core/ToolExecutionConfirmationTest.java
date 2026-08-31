@@ -16,7 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class ToolExecutionConfirmationTest {
 
     @Test
-    void 构造后安装的Router也能被后台Agent线程使用() throws Exception {
+    void shouldUseRouterInstalledAfterConfirmationConstructionFromAgentThread() throws Exception {
         AtomicInteger directReads = new AtomicInteger();
         LineReader lineReader = (LineReader) Proxy.newProxyInstance(
                 LineReader.class.getClassLoader(),
@@ -51,7 +51,7 @@ class ToolExecutionConfirmationTest {
     }
 
     @Test
-    void 取消等待会立即释放后台Agent线程() throws Exception {
+    void shouldReleaseAgentThreadWhenPendingInputIsCancelled() throws Exception {
         LineReader lineReader = (LineReader) Proxy.newProxyInstance(
                 LineReader.class.getClassLoader(),
                 new Class<?>[]{LineReader.class},

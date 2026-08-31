@@ -26,7 +26,7 @@ class SubAgentExecutorTest {
     }
 
     @Test
-    void 并发上限不超配置值() {
+    void shouldNotExceedConfiguredConcurrencyLimit() {
         SubAgentExecutor executor = new SubAgentExecutor(2, null);
         try {
             int tasks = 6;
@@ -56,7 +56,7 @@ class SubAgentExecutorTest {
     }
 
     @Test
-    void 多任务并行总耗时小于串行() {
+    void shouldRunIndependentTasksInParallel() {
         SubAgentExecutor executor = new SubAgentExecutor(3, null);
         try {
             int tasks = 3;
@@ -84,7 +84,7 @@ class SubAgentExecutorTest {
     }
 
     @Test
-    void 后台任务完成drain取回结论() {
+    void shouldDrainCompletedBackgroundTaskResultOnce() {
         SubAgentExecutor executor = new SubAgentExecutor(2, null);
         try {
             SubAgentExecutor.BackgroundTask task =
@@ -113,7 +113,7 @@ class SubAgentExecutorTest {
     }
 
     @Test
-    void 后台任务异常收敛为FAILED且结论可drain() {
+    void shouldMarkFailedBackgroundTaskAndExposeResultForDrain() {
         SubAgentExecutor executor = new SubAgentExecutor(1, null);
         try {
             executor.startBackground("会失败", t -> {
@@ -140,7 +140,7 @@ class SubAgentExecutorTest {
     }
 
     @Test
-    void shutdown取消运行中的后台任务() {
+    void shouldCancelRunningBackgroundTasksOnShutdown() {
         SubAgentExecutor executor = new SubAgentExecutor(1, null);
         CountDownLatch entered = new CountDownLatch(1);
         SubAgentExecutor.BackgroundTask task = executor.startBackground("长任务", t -> {

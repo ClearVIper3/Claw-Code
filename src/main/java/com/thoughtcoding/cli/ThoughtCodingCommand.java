@@ -258,105 +258,107 @@ public class ThoughtCodingCommand implements Callable<Integer> {
         // 回合后台化：agent 在虚拟线程上跑，主线程保持可输入（stop 可中断）
         AgentTurnRunner runner = new AgentTurnRunner(agentLoop, context);
 
-        while (true) {
-            try {
-                // 🔥 在读取输入前输出一个换行，确保 thought> 提示符在新的一行
-                ui.getTerminal().writer().println();
-                ui.getTerminal().writer().flush();
+        try {
+            while (true) {
+                try {
+                    // 🔥 在读取输入前输出一个换行，确保 thought> 提示符在新的一行
+                    ui.getTerminal().writer().println();
+                    ui.getTerminal().writer().flush();
 
-                String input = ui.readInput("thought> ");
+                    String input = ui.readInput("thought> ");
 
-                if (input == null || input.trim().isEmpty()) {
-                    continue;
-                }
-
-                String trimmedInput = input.trim();
-
-                // ── 输入路由：agent 线程的工具确认框正在等待输入 → 优先投递给它 ──
-                com.thoughtcoding.core.ConsoleInputRouter router = context.getConsoleInputRouter();
-                if (router != null && router.hasPending()) {
-                    if (trimmedInput.equalsIgnoreCase("stop") || trimmedInput.equalsIgnoreCase("停止")) {
-                        // stop 在确认等待期间：拒绝确认（投递 2）并取消整个回合
-                        router.deliverLine("2");
-                        cancelCurrentTurn(runner, ui);
-                    } else {
-                        router.deliverLine(trimmedInput);
+                    if (input == null || input.trim().isEmpty()) {
+                        continue;
                     }
-                    continue;
+
+                    String trimmedInput = input.trim();
+
+                    // ── 输入路由：agent 线程的工具确认框正在等待输入 → 优先投递给它 ──
+                    com.thoughtcoding.core.ConsoleInputRouter router = context.getConsoleInputRouter();
+                    if (router != null && router.hasPending()) {
+                        if (trimmedInput.equalsIgnoreCase("stop") || trimmedInput.equalsIgnoreCase("停止")) {
+                            // stop 在确认等待期间：拒绝确认（投递 2）并取消整个回合
+                            router.deliverLine("2");
+                            cancelCurrentTurn(runner, ui);
+                        } else {
+                            router.deliverLine(trimmedInput);
+                        }
+                        continue;
+                    }
+
+                    // 退出命令
+                    if (trimmedInput.equalsIgnoreCase("exit") || trimmedInput.equalsIgnoreCase("quit")) {
+                        ui.displayInfo("Goodbye!");
+                        break;
+                    }
+
+                    // 帮助命令
+                    if (trimmedInput.equalsIgnoreCase("help")) {
+                        showHelp();
+                        continue;
+                    }
+
+                    // 清屏命令
+                    if (trimmedInput.equalsIgnoreCase("clear")) {
+                        ui.clearScreen();
+                        continue;
+                    }
+
+                    // 🛑 停止生成命令：取消当前回合（流式提前结束、bash 被 kill、子代理中断）
+                    if (trimmedInput.equalsIgnoreCase("stop") || trimmedInput.equalsIgnoreCase("停止")) {
+                        cancelCurrentTurn(runner, ui);
+                        continue;
+                    }
+
+                    // 回合运行中：其余操作要求先 stop（它们会改动共享服务/会话状态）
+                    if (runner.isRunning()) {
+                        ui.displayWarning("⚠️  任务执行中，输入 stop 可中断后再操作");
+                        continue;
+                    }
+
+                    // 🔧 直接命令帮助
+                    if (trimmedInput.equalsIgnoreCase("/commands") || trimmedInput.equalsIgnoreCase("/cmds")) {
+                        directCommandExecutor.listSupportedCommands();
+                        continue;
+                    }
+
+                    // 🔥 MCP 相关命令 - 直接在这里处理
+                    if (trimmedInput.startsWith("/mcp")) {
+                        handleMCPCommand(trimmedInput);
+                        continue;
+                    }
+
+                    // SubAgent worktree 生命周期管理
+                    if (trimmedInput.equals("/agents") || trimmedInput.startsWith("/agents ")) {
+                        handleAgentsCommand(trimmedInput);
+                        continue;
+                    }
+
+                    // 🚀 新增：检查是否是直接命令执行
+                    //TODO ：优化正则检测，降低误判率
+                    if (directCommandExecutor.shouldExecuteDirectly(trimmedInput)) {
+                        directCommandExecutor.executeDirectCommand(trimmedInput);
+                        continue;
+                    }
+
+                    // 🚨 关键修复：检查是否是参数格式
+                    if (isParameterFormat(trimmedInput)) {
+                        handleParameterInInteractiveMode(trimmedInput, agentLoop);
+                        continue;
+                    }
+
+                    // 处理普通对话：提交为后台回合（立即返回，可继续输入 stop 中断）
+                    runner.submit(trimmedInput);
+
+                } catch (Exception e) {
+                    ui.displayError("Error: " + e.getMessage());
                 }
-
-                // 退出命令
-                if (trimmedInput.equalsIgnoreCase("exit") || trimmedInput.equalsIgnoreCase("quit")) {
-                    ui.displayInfo("Goodbye!");
-                    runner.shutdown();                       // 取消运行中的回合
-                    context.getSubAgentExecutor().shutdown(); // 取消后台子代理
-                    break;
-                }
-
-                // 帮助命令
-                if (trimmedInput.equalsIgnoreCase("help")) {
-                    showHelp();
-                    continue;
-                }
-
-                // 清屏命令
-                if (trimmedInput.equalsIgnoreCase("clear")) {
-                    ui.clearScreen();
-                    continue;
-                }
-
-                // 🛑 停止生成命令：取消当前回合（流式提前结束、bash 被 kill、子代理中断）
-                if (trimmedInput.equalsIgnoreCase("stop") || trimmedInput.equalsIgnoreCase("停止")) {
-                    cancelCurrentTurn(runner, ui);
-                    continue;
-                }
-
-                // 回合运行中：其余操作要求先 stop（它们会改动共享服务/会话状态）
-                if (runner.isRunning()) {
-                    ui.displayWarning("⚠️  任务执行中，输入 stop 可中断后再操作");
-                    continue;
-                }
-
-                // 🔧 直接命令帮助
-                if (trimmedInput.equalsIgnoreCase("/commands") || trimmedInput.equalsIgnoreCase("/cmds")) {
-                    directCommandExecutor.listSupportedCommands();
-                    continue;
-                }
-
-                // 🔥 MCP 相关命令 - 直接在这里处理
-                if (trimmedInput.startsWith("/mcp")) {
-                    handleMCPCommand(trimmedInput);
-                    continue;
-                }
-
-                // SubAgent worktree 生命周期管理
-                if (trimmedInput.equals("/agents") || trimmedInput.startsWith("/agents ")) {
-                    handleAgentsCommand(trimmedInput);
-                    continue;
-                }
-
-                // 🚀 新增：检查是否是直接命令执行
-                //TODO ：优化正则检测，降低误判率
-                if (directCommandExecutor.shouldExecuteDirectly(trimmedInput)) {
-                    directCommandExecutor.executeDirectCommand(trimmedInput);
-                    continue;
-                }
-
-                // 🚨 关键修复：检查是否是参数格式
-                if (isParameterFormat(trimmedInput)) {
-                    handleParameterInInteractiveMode(trimmedInput, agentLoop);
-                    continue;
-                }
-
-                // 处理普通对话：提交为后台回合（立即返回，可继续输入 stop 中断）
-                runner.submit(trimmedInput);
-
-            } catch (Exception e) {
-                ui.displayError("Error: " + e.getMessage());
             }
+            return 0;
+        } finally {
+            // 命令级资源在自己的作用域回收；应用级资源由 ThoughtCodingContext.close() 负责。
+            runner.shutdown();
         }
-
-        return 0;
     }
 
     /**
@@ -718,19 +720,11 @@ public class ThoughtCodingCommand implements Callable<Integer> {
     private void stopCurrentGeneration() {
         ThoughtCodingUI ui = context.getUi();
         try {
-            // 尝试停止 LangChainService 的生成
-            if (context.getAiService() instanceof com.thoughtcoding.service.LangChainService) {
-                com.thoughtcoding.service.LangChainService langChainService =
-                    (com.thoughtcoding.service.LangChainService) context.getAiService();
-
-                if (langChainService.isGenerating()) {
-                    langChainService.stopCurrentGeneration();
-                    ui.displayWarning("⏸️  生成已停止");
-                } else {
-                    ui.displayInfo("ℹ️  当前没有正在进行的生成");
-                }
+            if (context.getAiService().isGenerating()) {
+                context.getAiService().stopCurrentGeneration();
+                ui.displayWarning("⏸️  生成已停止");
             } else {
-                ui.displayWarning("⚠️  当前 AI 服务不支持停止功能");
+                ui.displayInfo("ℹ️  当前没有正在进行的生成");
             }
         } catch (Exception e) {
             ui.displayError("停止生成时出错: " + e.getMessage());

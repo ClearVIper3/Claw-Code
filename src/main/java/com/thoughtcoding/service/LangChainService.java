@@ -416,10 +416,12 @@ public class LangChainService implements AIService {
         return new ArrayList<>(appConfig.getModels().keySet());
     }
 
+    @Override
     public boolean isGenerating() {
         return isGenerating;
     }
 
+    @Override
     public void stopCurrentGeneration() {
         if (isGenerating) {
             shouldStop = true;

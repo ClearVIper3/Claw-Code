@@ -28,7 +28,7 @@ public class DirectCommandExecutorTest {
     }
 
     @Test
-    public void testProjectContextDetection() {
+    public void shouldDetectProjectContext() {
         // 测试项目类型检测
         ProjectContext.ProjectType type = projectContext.getProjectType();
         assertNotNull(type, "项目类型不应为空");
@@ -38,7 +38,7 @@ public class DirectCommandExecutorTest {
     }
 
     @Test
-    public void testSmartCommandTranslation() {
+    public void shouldTranslateNaturalLanguageIntoCommands() {
         // 测试智能命令转换
         String buildCmd = projectContext.smartTranslate("build");
         String testCmd = projectContext.smartTranslate("test");
@@ -59,7 +59,7 @@ public class DirectCommandExecutorTest {
     }
 
     @Test
-    public void testProjectSummary() {
+    public void shouldGenerateProjectSummary() {
         // 测试项目信息摘要
         String summary = projectContext.getSummary();
         assertNotNull(summary, "项目摘要不应为空");
@@ -70,7 +70,7 @@ public class DirectCommandExecutorTest {
     }
 
     @Test
-    public void testRecommendedCommands() {
+    public void shouldRecommendProjectCommands() {
         // 测试推荐命令
         String[] recommendations = projectContext.getRecommendedCommands();
         assertNotNull(recommendations, "推荐命令不应为空");
@@ -83,7 +83,7 @@ public class DirectCommandExecutorTest {
     }
 
     @Test
-    void 直接命令命中硬拒绝规则时不会执行工具也不会弹确认() {
+    void shouldRejectDeniedDirectCommandWithoutExecutionOrConfirmation() {
         AtomicInteger executions = new AtomicInteger();
         Fixture fixture = fixtureWithBash(executions);
 
@@ -96,7 +96,7 @@ public class DirectCommandExecutorTest {
     }
 
     @Test
-    void 直接命令被用户拒绝时不会执行注册表工具() {
+    void shouldNotExecuteRegistryToolWhenUserRejectsDirectCommand() {
         AtomicInteger executions = new AtomicInteger();
         Fixture fixture = fixtureWithBash(executions);
         when(fixture.confirmation.askConfirmationWithOptions(any()))
@@ -110,7 +110,7 @@ public class DirectCommandExecutorTest {
     }
 
     @Test
-    void 直接命令确认后通过统一Dispatcher执行注册表工具() {
+    void shouldExecuteRegistryToolThroughDispatcherAfterConfirmation() {
         AtomicInteger executions = new AtomicInteger();
         Fixture fixture = fixtureWithBash(executions);
         when(fixture.confirmation.askConfirmationWithOptions(any()))

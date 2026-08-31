@@ -12,7 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 class MCPServiceLifecycleTest {
 
     @Test
-    void 按服务器保存并精确回收工具快照() {
+    void shouldStoreAndRemoveToolSnapshotsByServer() {
         MCPService service = new MCPService();
         BaseTool a1 = tool("a1");
         BaseTool a2 = tool("a2");
@@ -30,7 +30,7 @@ class MCPServiceLifecycleTest {
     }
 
     @Test
-    void 同一服务器重连会替换而不是累积旧工具() {
+    void shouldReplaceOldToolsWhenSameServerReconnects() {
         MCPService service = new MCPService();
         BaseTool oldTool = tool("old");
         BaseTool refreshedTool = tool("new");
@@ -43,7 +43,7 @@ class MCPServiceLifecycleTest {
     }
 
     @Test
-    void 展平同名工具时不会静默丢失任一服务器能力() {
+    void shouldPreserveToolsFromAllServersWhenNamesCollideDuringFlattening() {
         MCPService service = new MCPService();
         service.rememberTools("server-a", List.of(tool("search")));
         service.rememberTools("server-b", List.of(tool("search")));

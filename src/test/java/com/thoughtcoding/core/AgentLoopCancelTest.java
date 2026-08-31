@@ -68,7 +68,7 @@ class AgentLoopCancelTest {
     }
 
     @Test
-    void 从中间取消_剩余调用各补一条配对结果() {
+    void shouldAppendPairedResultsForRemainingCallsWhenCancelledMidBatch() {
         ToolCall c1 = call("bash", "id-1");
         ToolCall c2 = call("read", "id-2");
         ToolCall c3 = call("subAgent", "id-3");
@@ -85,7 +85,7 @@ class AgentLoopCancelTest {
     }
 
     @Test
-    void 从零取消_全部调用补配对结果() {
+    void shouldAppendPairedResultsForAllCallsWhenCancelledBeforeBatch() {
         ToolCall c1 = call("bash", "id-1");
         ToolCall c2 = call("read", "id-2");
         List<ChatMessage> history = historyWithAssistant(c1, c2);
@@ -103,7 +103,7 @@ class AgentLoopCancelTest {
     }
 
     @Test
-    void 空批次与越界索引安全() {
+    void shouldHandleEmptyBatchAndOutOfRangeStartIndex() {
         List<ChatMessage> history = historyWithAssistant();
         assertDoesNotThrow(() -> AgentLoop.fillCancelledResults(List.of(), 0, history));
         assertDoesNotThrow(() -> AgentLoop.fillCancelledResults(List.of(call("bash", "x")), 5, history));
