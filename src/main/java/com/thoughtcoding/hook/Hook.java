@@ -5,6 +5,7 @@ package com.thoughtcoding.hook;
  *
  * <p>约定：动作应尽量轻量、避免抛异常；如需阻断请返回 {@link HookResult#block}。
  * 未处理异常由注册表按 {@link #failurePolicy()} 决定放行或阻断。
+ * 应用级 Hook 实例会被多个 Agent 动作链共享，带可变状态的实现必须保证线程安全。
  */
 @FunctionalInterface
 public interface Hook {

@@ -51,11 +51,11 @@ public class AgentLoop {
             null,
             context::getConsoleInputRouter    // Runner 晚于 Loop 创建，执行确认时再动态获取
         );
-        // 一开始先注册四种 hook 时机（动作由业务方按需 register 追加）
-        this.hookRegistry = new HookRegistry();
+        // 从应用级 Hook 模板派生本 Agent 的隔离动作链。
+        this.hookRegistry = context.getHookRegistry().copy();
 
-        // 将权限检查注册为 PRE_TOOL_USE 的 hook 动作
-        this.hookRegistry.register(com.thoughtcoding.hook.HookType.PRE_TOOL_USE,
+        // 权限检查必须位于业务扩展之前，且确认组件属于当前 Agent 实例。
+        this.hookRegistry.registerFirst(com.thoughtcoding.hook.HookType.PRE_TOOL_USE,
                 new PermissionHook(this.confirmation));
         this.toolPipeline = new ToolExecutionPipeline(
                 context, this.hookRegistry, context.getToolRegistry());

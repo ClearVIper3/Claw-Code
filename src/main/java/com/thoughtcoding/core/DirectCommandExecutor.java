@@ -205,8 +205,8 @@ public class DirectCommandExecutor {
     /** 测试/嵌入场景可注入确认组件，生产入口使用上面的统一确认栈。 */
     DirectCommandExecutor(ThoughtCodingContext context, ToolExecutionConfirmation confirmation) {
         this.ui = context.getUi();
-        HookRegistry hookRegistry = new HookRegistry()
-                .register(HookType.PRE_TOOL_USE, new PermissionHook(confirmation));
+        HookRegistry hookRegistry = context.getHookRegistry().copy()
+                .registerFirst(HookType.PRE_TOOL_USE, new PermissionHook(confirmation));
         this.toolPipeline = new ToolExecutionPipeline(
                 context, hookRegistry, context.getToolRegistry());
         this.projectContext = new ProjectContext(System.getProperty("user.dir"));

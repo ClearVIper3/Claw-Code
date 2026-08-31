@@ -1,16 +1,17 @@
 package com.thoughtcoding.hook;
 
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * Hook 注册表 —— Hook 系统的统一管理者，仿照 {@code ToolRegistry} 的注册表理念。
  *
  * <p>构造时即为 {@link HookType} 的四种时机各建立一条有序动作链；
  * {@link #register} 按顺序追加动作，{@link #fire} 在对应时机 <b>串行</b> 触发。
+ * 动作链使用写时复制列表，允许并行 Agent 安全读取，并支持在 Runtime 启动阶段注册扩展。
  *
  * <p>串行语义：
  * <ul>
@@ -29,7 +30,7 @@ public class HookRegistry {
     public HookRegistry() {
         // 一开始先注册（建立）四种 hook 时机
         for (HookType type : HookType.values()) {
-            hooks.put(type, new ArrayList<>());
+            hooks.put(type, new CopyOnWriteArrayList<>());
         }
     }
 
@@ -50,6 +51,33 @@ public class HookRegistry {
 
     public HookRegistry register(HookType type, Hook hook) {
         return register(type, hook != null ? hook.name() : null, hook);
+    }
+
+    /**
+     * 将动作插入指定时机的最前面。安全/权限 Hook 使用此前置入口，确保先于业务扩展执行。
+     */
+    public HookRegistry registerFirst(HookType type, String name, Hook hook) {
+        if (type == null || hook == null) return this;
+        HookFailurePolicy declaredPolicy = hook.failurePolicy();
+        HookFailurePolicy policy = declaredPolicy != null
+                ? declaredPolicy : HookFailurePolicy.FAIL_OPEN;
+        hooks.get(type).add(0, new Entry(name != null ? name : hook.name(), hook, policy));
+        return this;
+    }
+
+    public HookRegistry registerFirst(HookType type, Hook hook) {
+        return registerFirst(type, hook != null ? hook.name() : null, hook);
+    }
+
+    /**
+     * 派生独立动作链快照。列表彼此隔离，Hook 实例本身共享，便于审计/指标 Hook 聚合状态。
+     */
+    public HookRegistry copy() {
+        HookRegistry copy = new HookRegistry();
+        for (HookType type : HookType.values()) {
+            copy.hooks.get(type).addAll(hooks.get(type));
+        }
+        return copy;
     }
 
     /**

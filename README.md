@@ -236,7 +236,7 @@ ThoughtCoding/
 `ThoughtCodingContext.java`
 
 - **功能**：应用上下文容器（依赖注入）
-- **特性**：统一管理所有服务组件，提供全局访问入口；启动时在此注册全部内置工具
+- **特性**：统一管理所有服务组件，提供全局访问入口；启动时在此注册全部内置工具，并持有应用级 HookRegistry 模板供主 Agent、SubAgent 与直接命令派生隔离动作链
 
 `AgentLoop.java`
 
@@ -331,7 +331,7 @@ ThoughtCoding/
 `ToolDispatcher.java`
 
 - **功能**：工具执行收口
-- **特性**：原生 function calling 与 MCP 工具的执行收口（查表 → Jackson 序列化参数 → `execute(JSON)`）；统一把参数序列化失败、工具运行时异常、取消与空返回收敛为非空 `ToolResult`，保证 provider tool call 始终可写入配对结果。权限由 `AgentLoop` 的 `HookRegistry.fire(PRE_TOOL_USE)` → `PermissionHook` → `PermissionGate.check` 完成。例外：`DirectCommandExecutor` 自建 `BashTool` 实例、不经过本收口
+- **特性**：原生 function calling、MCP 与直接命令的执行收口（查表 → Jackson 序列化参数 → `execute(JSON)`）；统一把参数序列化失败、工具运行时异常、取消与空返回收敛为非空 `ToolResult`，保证 provider tool call 始终可写入配对结果。权限由 `ToolExecutionPipeline` 的 `HookRegistry.fire(PRE_TOOL_USE)` → `PermissionHook` → `PermissionGate.check` 完成
 
 `ToolSpecificationFactory.java`
 
@@ -379,6 +379,17 @@ ThoughtCoding/
 - `HookRegistry.java`：`fire(context)` 串行执行已注册 Hook，命中 BLOCK / CONTINUE_LOOP 即短路
 - `HookContext.java` / `HookResult.java`：支持输入改写、上下文注入，以及 PROCEED / BLOCK / CONTINUE_LOOP 决策
 - `Hook.java`：Hook 接口。普通扩展异常默认 fail-open，权限 Hook 使用 fail-closed，避免检查异常时绕过安全控制
+
+应用级扩展在 Runtime Context 注册：
+
+```java
+context.getHookRegistry().register(HookType.POST_TOOL_USE, hookContext -> {
+    // 审计、指标、日志等横切能力
+    return HookResult.proceed();
+});
+```
+
+主 Agent、每个 SubAgent 和直接命令执行器在创建时都会复制应用级动作链，再把各自的 `PermissionHook` 前置注册。动作链列表相互隔离，Hook 实例共享，因此局部注册不会串扰，同时审计/指标 Hook 可以聚合全局状态。应用级 Hook 应在对应 Runtime 创建前完成注册；带可变状态的 Hook 必须自行保证线程安全。
 
 ### `src/main/java/com/thoughtcoding/mcp/` - MCP 功能
 

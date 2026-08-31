@@ -1,5 +1,6 @@
 package com.thoughtcoding.core;
 
+import com.thoughtcoding.hook.HookRegistry;
 import com.thoughtcoding.model.ToolResult;
 import com.thoughtcoding.tool.BaseTool;
 import com.thoughtcoding.tool.ToolRegistry;
@@ -136,6 +137,7 @@ public class DirectCommandExecutorTest {
         });
         when(context.getUi()).thenReturn(ui);
         when(context.getToolRegistry()).thenReturn(registry);
+        when(context.getHookRegistry()).thenReturn(new HookRegistry());
 
         return new Fixture(new DirectCommandExecutor(context, confirmation), confirmation);
     }

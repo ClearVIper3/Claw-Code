@@ -3,6 +3,7 @@ package com.thoughtcoding.core;
 import com.thoughtcoding.config.AppConfig;
 import com.thoughtcoding.config.ConfigManager;
 import com.thoughtcoding.config.MCPConfig;
+import com.thoughtcoding.hook.HookRegistry;
 import com.thoughtcoding.mcp.MCPService;
 import com.thoughtcoding.mcp.MCPToolManager;
 import com.thoughtcoding.service.AIService;
@@ -43,6 +44,8 @@ public class ThoughtCodingContext {
     private final ToolRegistry toolRegistry;
     private final ThoughtCodingUI ui;
     private final PerformanceMonitor performanceMonitor;
+    /** 应用级 Hook 模板；各 Agent/命令执行实例从这里派生隔离动作链。 */
+    private final HookRegistry hookRegistry;
 
     // 🔥 新增 MCP 相关服务
     private final MCPService mcpService;
@@ -65,6 +68,8 @@ public class ThoughtCodingContext {
         this.toolRegistry = builder.toolRegistry;
         this.ui = builder.ui;
         this.performanceMonitor = builder.performanceMonitor;
+        this.hookRegistry = builder.hookRegistry != null
+                ? builder.hookRegistry : new HookRegistry();
         this.mcpService = builder.mcpService;
         this.mcpToolManager = builder.mcpToolManager;
         this.contextManager = builder.contextManager;
@@ -150,6 +155,7 @@ public class ThoughtCodingContext {
                 .toolRegistry(toolRegistry)
                 .ui(ui)
                 .performanceMonitor(performanceMonitor)
+                .hookRegistry(new HookRegistry())
                 .mcpService(mcpService)
                 .mcpToolManager(mcpToolManager)
                 .contextManager(contextManager)  // 🔥 添加 contextManager
@@ -319,6 +325,7 @@ public class ThoughtCodingContext {
     public void setConsoleInputRouter(ConsoleInputRouter router) { this.consoleInputRouter = router; }
     public ThoughtCodingUI getUi() { return ui; }
     public PerformanceMonitor getPerformanceMonitor() { return performanceMonitor; }
+    public HookRegistry getHookRegistry() { return hookRegistry; }
 
     // 🔥 新增 MCP 相关 Getter
     public MCPService getMcpService() { return mcpService; }
@@ -339,6 +346,7 @@ public class ThoughtCodingContext {
         private ToolRegistry toolRegistry;
         private ThoughtCodingUI ui;
         private PerformanceMonitor performanceMonitor;
+        private HookRegistry hookRegistry;
         // 🔥 新增 MCP 字段
         private MCPService mcpService;
         private MCPToolManager mcpToolManager;
@@ -379,6 +387,11 @@ public class ThoughtCodingContext {
 
         public Builder performanceMonitor(PerformanceMonitor performanceMonitor) {
             this.performanceMonitor = performanceMonitor;
+            return this;
+        }
+
+        public Builder hookRegistry(HookRegistry hookRegistry) {
+            this.hookRegistry = hookRegistry;
             return this;
         }
 

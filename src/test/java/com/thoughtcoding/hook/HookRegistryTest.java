@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -114,5 +115,42 @@ class HookRegistryTest {
 
         assertTrue(result.isContinueLoop());
         assertEquals("还需验证测试", result.message());
+    }
+
+    @Test
+    void 派生Registry继承应用Hook但后续注册彼此隔离() {
+        AtomicInteger sharedExecutions = new AtomicInteger();
+        HookRegistry application = new HookRegistry()
+                .register(HookType.POST_TOOL_USE, context -> {
+                    sharedExecutions.incrementAndGet();
+                    return HookResult.proceed();
+                });
+
+        HookRegistry agent = application.copy()
+                .register(HookType.POST_TOOL_USE, context -> HookResult.proceed());
+
+        assertEquals(1, application.count(HookType.POST_TOOL_USE));
+        assertEquals(2, agent.count(HookType.POST_TOOL_USE));
+        agent.fire(HookContext.forPostTool(null, List.of(), null, null));
+        application.fire(HookContext.forPostTool(null, List.of(), null, null));
+        assertEquals(2, sharedExecutions.get(), "共享 Hook 实例应覆盖应用和派生执行链");
+    }
+
+    @Test
+    void registerFirst确保安全Hook先于业务Hook执行() {
+        List<String> order = new ArrayList<>();
+        HookRegistry registry = new HookRegistry()
+                .register(HookType.PRE_TOOL_USE, "business", context -> {
+                    order.add("business");
+                    return HookResult.proceed();
+                })
+                .registerFirst(HookType.PRE_TOOL_USE, "security", context -> {
+                    order.add("security");
+                    return HookResult.proceed();
+                });
+
+        registry.fire(HookContext.forPreTool(null, List.of(), null));
+
+        assertEquals(List.of("security", "business"), order);
     }
 }

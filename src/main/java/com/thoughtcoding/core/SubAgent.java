@@ -62,8 +62,8 @@ public class SubAgent {
         ToolExecutionConfirmation confirmation =
                 new ToolExecutionConfirmation(ui, ui.getLineReader(), "[SubAgent " + label + "]",
                         context::getConsoleInputRouter);
-        HookRegistry hookRegistry = new HookRegistry();
-        hookRegistry.register(HookType.PRE_TOOL_USE, new PermissionHook(confirmation));
+        HookRegistry hookRegistry = context.getHookRegistry().copy();
+        hookRegistry.registerFirst(HookType.PRE_TOOL_USE, new PermissionHook(confirmation));
         ToolExecutionPipeline toolPipeline = new ToolExecutionPipeline(
                 context, hookRegistry, context.getToolRegistry());
 
