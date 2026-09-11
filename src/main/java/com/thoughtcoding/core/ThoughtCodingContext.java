@@ -6,6 +6,8 @@ import com.thoughtcoding.config.MCPConfig;
 import com.thoughtcoding.hook.HookRegistry;
 import com.thoughtcoding.mcp.MCPService;
 import com.thoughtcoding.mcp.MCPToolManager;
+import com.thoughtcoding.memory.MemoryService;
+import com.thoughtcoding.memory.MemoryStore;
 import com.thoughtcoding.service.AIService;
 import com.thoughtcoding.service.ContextManager;
 import com.thoughtcoding.service.LangChainService;
@@ -65,6 +67,8 @@ public class ThoughtCodingContext implements AutoCloseable {
 
     // 终端输入路由器（回合后台化后 agent 线程确认框的输入来源；由 AgentTurnRunner 构造时注册）
     private volatile ConsoleInputRouter consoleInputRouter;
+    // 🔥 新增记忆系统（LLM 驱动：召回/储存/整理；非工具）
+    private final MemoryService memoryService;
 
     private ThoughtCodingContext(Builder builder) {
         this.appConfig = builder.appConfig;
@@ -80,6 +84,7 @@ public class ThoughtCodingContext implements AutoCloseable {
         this.mcpToolManager = builder.mcpToolManager;
         this.contextManager = builder.contextManager;
         this.subAgentExecutor = builder.subAgentExecutor;
+        this.memoryService = builder.memoryService;
     }
 
     public static ThoughtCodingContext initialize() {
@@ -135,7 +140,23 @@ public class ThoughtCodingContext implements AutoCloseable {
         }
 
         // 服务层初始化
-        ContextManager contextManager = new ContextManager(appConfig, skillRegistry);  // 🔥 创建上下文管理器
+        // ── 记忆系统（非工具）：LLM 驱动召回/储存/整理；memory.enabled=false 或内存分配失败则整体为 null ──
+        AppConfig.MemoryConfig memCfg = appConfig.getMemory();
+        MemoryStore memoryStore = null;
+        MemoryService memoryService = null;
+        if (memCfg != null && memCfg.isEnabled()) {
+            try {
+                memoryStore = MemoryStore.load(
+                        java.nio.file.Paths.get(System.getProperty("user.dir"), ".memory"),
+                        memCfg.getMaxIndexEntries());
+                memoryService = new MemoryService(appConfig, memoryStore, memCfg);
+            } catch (Exception e) {
+                // 记忆系统初始化失败不阻塞主对话
+                memoryStore = null;
+                memoryService = null;
+            }
+        }
+        ContextManager contextManager = new ContextManager(appConfig, skillRegistry, memoryStore);  // 🔥 创建上下文管理器
         AIService aiService = new LangChainService(appConfig, toolRegistry, contextManager);  // 🔥 注入 contextManager
         SessionService sessionService = new SessionService();
         PerformanceMonitor performanceMonitor = new PerformanceMonitor();
@@ -161,6 +182,7 @@ public class ThoughtCodingContext implements AutoCloseable {
                 .mcpToolManager(mcpToolManager)
                 .contextManager(contextManager)  // 🔥 添加 contextManager
                 .subAgentExecutor(subAgentExecutor)
+                .memoryService(memoryService)   // 🔥 添加 memoryService（可为 null = 记忆关闭）
                 .build();
 
         try {
@@ -381,6 +403,9 @@ public class ThoughtCodingContext implements AutoCloseable {
     public SubAgentExecutor getSubAgentExecutor() { return subAgentExecutor; }
     public ConsoleInputRouter getConsoleInputRouter() { return consoleInputRouter; }
     public void setConsoleInputRouter(ConsoleInputRouter router) { this.consoleInputRouter = router; }
+
+    // 🔥 新增 memoryService Getter（可为 null = 记忆功能关闭）
+    public MemoryService getMemoryService() { return memoryService; }
     public ThoughtCodingUI getUi() { return ui; }
     public PerformanceMonitor getPerformanceMonitor() { return performanceMonitor; }
     public HookRegistry getHookRegistry() { return hookRegistry; }
@@ -433,6 +458,8 @@ public class ThoughtCodingContext implements AutoCloseable {
         private ContextManager contextManager;
         // 🔥 并行/后台子代理调度器
         private SubAgentExecutor subAgentExecutor;
+        // 🔥 新增记忆系统字段
+        private MemoryService memoryService;
 
         public Builder appConfig(AppConfig appConfig) {
             this.appConfig = appConfig;
@@ -494,6 +521,11 @@ public class ThoughtCodingContext implements AutoCloseable {
         // 🔥 子代理调度器 Builder 方法
         public Builder subAgentExecutor(SubAgentExecutor subAgentExecutor) {
             this.subAgentExecutor = subAgentExecutor;
+            return this;
+        }
+        // 🔥 新增 memoryService Builder 方法
+        public Builder memoryService(MemoryService memoryService) {
+            this.memoryService = memoryService;
             return this;
         }
 

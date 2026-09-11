@@ -29,6 +29,9 @@ public class AppConfig {
     @JsonProperty("ai")
     private AIConfig ai = new AIConfig(); // AI行为配置
 
+    @JsonProperty("memory")
+    private MemoryConfig memory = new MemoryConfig(); // 记忆系统配置
+
 
     // Getters and Setters
     public Map<String, ModelConfig> getModels() {
@@ -67,6 +70,17 @@ public class AppConfig {
 
     public void setAi(AIConfig ai) {
         this.ai = ai;
+    }
+
+    public MemoryConfig getMemory() {
+        if (memory == null) {
+            memory = new MemoryConfig();
+        }
+        return memory;
+    }
+
+    public void setMemory(MemoryConfig memory) {
+        this.memory = memory;
     }
 
 
@@ -416,6 +430,68 @@ public class AppConfig {
 
         public void setL4KeepTail(int l4KeepTail) {
             this.l4KeepTail = l4KeepTail;
+        }
+    }
+
+    /**
+     * 记忆(Memory)系统配置 —— 注意：记忆<b>不作为工具</b>，由 AgentLoop 生命周期编排 +
+     * system prompt 索引注入驱动（见 MemoryService / MemoryStore）。
+     */
+    @Data
+    public static class MemoryConfig {
+        @JsonProperty("enabled")
+        private boolean enabled = true; // 总开关：装配记忆系统（加载 .memory/、注入索引、召回/储存/整理）
+
+        @JsonProperty("autoExtract")
+        private boolean autoExtract = true; // 每轮对话结束后自动抽取新记忆（需一次模型往返，可关）
+
+        @JsonProperty("consolidateThreshold")
+        private int consolidateThreshold = 10; // 记忆文件数达到此值触发 LLM 整合去重（0=禁用）
+
+        @JsonProperty("maxIndexEntries")
+        private int maxIndexEntries = 200; // MEMORY.md 索引条数上限（超限裁掉最早写入的）
+
+        @JsonProperty("maxPerTurnInjections")
+        private int maxPerTurnInjections = 5; // 单轮自动注入的相关记忆条数上限
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public boolean isAutoExtract() {
+            return autoExtract;
+        }
+
+        public void setAutoExtract(boolean autoExtract) {
+            this.autoExtract = autoExtract;
+        }
+
+        public int getConsolidateThreshold() {
+            return consolidateThreshold;
+        }
+
+        public void setConsolidateThreshold(int consolidateThreshold) {
+            this.consolidateThreshold = consolidateThreshold;
+        }
+
+        public int getMaxIndexEntries() {
+            return maxIndexEntries;
+        }
+
+        public void setMaxIndexEntries(int maxIndexEntries) {
+            this.maxIndexEntries = maxIndexEntries;
+        }
+
+        public int getMaxPerTurnInjections() {
+            return maxPerTurnInjections;
+        }
+
+        public void setMaxPerTurnInjections(int maxPerTurnInjections) {
+            this.maxPerTurnInjections = maxPerTurnInjections;
         }
     }
 }

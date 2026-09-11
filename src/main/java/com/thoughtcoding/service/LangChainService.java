@@ -77,6 +77,12 @@ public class LangChainService implements AIService {
     @Override
     public List<ChatMessage> streamingChat(String input, List<ChatMessage> history, String modelName,
                                            com.thoughtcoding.core.CancelToken token) {
+        return streamingChat(input, history, modelName, token, null);
+    }
+
+    @Override
+    public List<ChatMessage> streamingChat(String input, List<ChatMessage> history, String modelName,
+                                           com.thoughtcoding.core.CancelToken token, String recalledMemories) {
         if (messageHandler == null) {
             throw new IllegalStateException("Message handler not set");
         }
@@ -98,7 +104,7 @@ public class LangChainService implements AIService {
         }
 
         try {
-            List<dev.langchain4j.data.message.ChatMessage> messages = prepareMessages(input, history);
+            List<dev.langchain4j.data.message.ChatMessage> messages = prepareMessages(input, history, recalledMemories);
 
             streamingChatNative(messages, history, fullResponse, completionFuture);
 
@@ -332,7 +338,7 @@ public class LangChainService implements AIService {
     }
 
     private List<dev.langchain4j.data.message.ChatMessage> prepareMessages(
-            String input, List<ChatMessage> history) {
+            String input, List<ChatMessage> history, String recalledMemories) {
         List<dev.langchain4j.data.message.ChatMessage> messages = new ArrayList<>();
 
         if (contextManager != null) {
@@ -349,6 +355,15 @@ public class LangChainService implements AIService {
 
         if (managedHistory != null && !managedHistory.isEmpty()) {
             messages.addAll(convertToLangChainHistory(managedHistory));
+        }
+
+        // 本轮召回的相关记忆（每轮易变）：包成 <system-reminder> 注入到消息列表<b>尾部</b>（贴当前轮），
+        // 而非塞进 system 前缀——保护「system + 历史」前缀缓存不被每轮召回冲掉（仿 Claude Code 把易变上下文贴当前用户轮）。
+        // 尾部是唯一能让整段历史保持可复用前缀的位置；每请求即时注入、不写入持久 history，故不污染后续轮。
+        // 正文经方法参数请求局部传递（AgentLoop → streamingChat → prepareMessages），不读共享可变状态。
+        String recallReminder = ContextManager.buildRecallReminder(recalledMemories);
+        if (recallReminder != null) {
+            messages.add(dev.langchain4j.data.message.UserMessage.from(recallReminder));
         }
 
         // 纯从 history 渲染：用户消息已由 AgentLoop 加入 history；input=null 时供 agentic 循环复用
