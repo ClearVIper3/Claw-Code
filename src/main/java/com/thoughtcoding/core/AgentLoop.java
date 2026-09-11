@@ -109,6 +109,8 @@ public class AgentLoop {
         } catch (Exception e) {
             context.getUi().displayError("Error processing input: " + e.getMessage());
         } finally {
+            // 异常中断也要把流式残余上屏，避免残留片段混入下一回合输出
+            context.getUi().flushAssistantStream();
             monitor.stop();
         }
     }
@@ -153,9 +155,9 @@ public class AgentLoop {
             pendingToolCalls.clear();
             // 一轮模型响应（无新用户输入；用户消息与历史已在 history 中）
             context.getAiService().streamingChat(null, history, modelName, token);
-            // 空一行，避免与后续工具确认/结果挤在一起
-            context.getUi().getTerminal().writer().println();
-            context.getUi().getTerminal().flush();
+            // 流式结束：残余半行上屏，再空一行，避免与后续工具确认/结果挤在一起
+            context.getUi().flushAssistantStream();
+            context.getUi().printAbove("");
 
             // 流式被中断：丢弃残余，为已缓存的调用补配对后退出
             if (token.isCancelled()) {
@@ -216,7 +218,7 @@ public class AgentLoop {
 
                 displayNativeToolResult(call, outcome.result());
                 // 工具结果显示后空一行，避免与下一轮 AI 流式文本挤在同一区域
-                context.getUi().getTerminal().writer().println();
+                context.getUi().printAbove("");
             }
 
             if (cancelled) {
@@ -328,8 +330,7 @@ public class AgentLoop {
         //    结论仍照常写回 history 回喂模型（见调用处），不受影响。
         if ("subAgent".equals(call.getToolName())) {
             if (result.isSuccess()) {
-                context.getUi().getTerminal().writer().println("└ 子Agent已返回结论");
-                context.getUi().getTerminal().writer().flush();
+                context.getUi().printAbove("└ 子Agent已返回结论");
             } else {
                 context.getUi().displayError("❌ 子Agent失败: " + result.getError());
             }
@@ -345,9 +346,8 @@ public class AgentLoop {
             String output = result.getOutput();
             if (output != null && !output.trim().isEmpty()) {
                 for (String line : output.trim().split("\n")) {
-                    context.getUi().getTerminal().writer().println("  " + line);
+                    context.getUi().printAbove("  " + line);
                 }
-                context.getUi().getTerminal().writer().flush();
             }
         } else {
             context.getUi().displayError("❌ 失败: " + result.getError());

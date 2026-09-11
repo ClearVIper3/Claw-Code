@@ -58,6 +58,11 @@ public class ToolExecutionConfirmation {
     String readLine(String prompt) {
         ConsoleInputRouter router = routerSupplier.get();
         if (router != null && !router.isOnOwnerThread()) {
+            // 回合线程不直接 readLine（LineReader 非线程安全）：提示文本经 printAbove
+            // 打到输入行上方，等待 REPL 主线程把用户输入经路由器投递过来
+            if (prompt != null && !prompt.isBlank()) {
+                ui.printAbove(prompt.strip());
+            }
             return router.awaitLine();
         }
         return lineReader.readLine(prompt);
@@ -177,14 +182,15 @@ public class ToolExecutionConfirmation {
      * 显示智能选项
      */
     private void displaySmartOptions(ToolExecution execution) {
-        ui.getTerminal().writer().println();
+        // printAbove：选项打在 thought> 提示符上方并保持提示符行不被冲掉
+        ui.printAbove("");
 
         // 展示工具名和参数，避免"无头"确认框
-        ui.getTerminal().writer().println("调用: " + execution.toolName() + " " + execution.arguments());
-        ui.getTerminal().writer().println();
+        ui.printAbove("调用: " + execution.toolName() + " " + execution.arguments());
+        ui.printAbove("");
 
-        ui.getTerminal().writer().println("你想要继续吗？");
-        ui.getTerminal().writer().println();
+        ui.printAbove("你想要继续吗？");
+        ui.printAbove("");
 
         String toolName = execution.toolName();
 
@@ -203,8 +209,7 @@ public class ToolExecutionConfirmation {
             displayDefaultOptions(execution);
         }
 
-        ui.getTerminal().writer().println();
-        ui.getTerminal().writer().flush();
+        ui.printAbove("");
     }
 
     /**
@@ -213,8 +218,8 @@ public class ToolExecutionConfirmation {
     private void displayCreateFileOptions(ToolExecution execution) {
         String fileName = extractFileName(execution);
 
-        ui.getTerminal().writer().println("❯ 1. 是的，创建文件" + fileName);
-        ui.getTerminal().writer().println("  2. 丢弃，不创建");
+        ui.printAbove("❯ 1. 是的，创建文件" + fileName);
+        ui.printAbove("  2. 丢弃，不创建");
     }
 
     /**
@@ -231,12 +236,12 @@ public class ToolExecutionConfirmation {
         );
 
         if (isDangerousCommand) {
-            ui.getTerminal().writer().println("⚠️  这是一个危险命令！");
-            ui.getTerminal().writer().println("❯ 1. 是的，我确认要执行");
-            ui.getTerminal().writer().println("  2. 取消，不执行");
+            ui.printAbove("⚠️  这是一个危险命令！");
+            ui.printAbove("❯ 1. 是的，我确认要执行");
+            ui.printAbove("  2. 取消，不执行");
         } else {
-            ui.getTerminal().writer().println("❯ 1. 是的，执行命令");
-            ui.getTerminal().writer().println("  2. 取消，不执行");
+            ui.printAbove("❯ 1. 是的，执行命令");
+            ui.printAbove("  2. 取消，不执行");
         }
     }
 
@@ -244,32 +249,32 @@ public class ToolExecutionConfirmation {
      * 显示编辑文件的选项
      */
     private void displayEditFileOptions(ToolExecution execution) {
-        ui.getTerminal().writer().println("❯ 1. 是的，应用修改");
-        ui.getTerminal().writer().println("  2. 取消，不修改");
+        ui.printAbove("❯ 1. 是的，应用修改");
+        ui.printAbove("  2. 取消，不修改");
     }
 
     /**
      * 显示读取文件的选项
      */
     private void displayReadFileOptions(ToolExecution execution) {
-        ui.getTerminal().writer().println("❯ 1. 是的，读取文件");
-        ui.getTerminal().writer().println("  2. 取消，不读取");
+        ui.printAbove("❯ 1. 是的，读取文件");
+        ui.printAbove("  2. 取消，不读取");
     }
 
     /**
      * 显示 glob 查找文件的选项
      */
     private void displayGlobOptions(ToolExecution execution) {
-        ui.getTerminal().writer().println("❯ 1. 是的，执行查找");
-        ui.getTerminal().writer().println("  2. 取消，不查找");
+        ui.printAbove("❯ 1. 是的，执行查找");
+        ui.printAbove("  2. 取消，不查找");
     }
 
     /**
      * 显示默认选项
      */
     private void displayDefaultOptions(ToolExecution execution) {
-        ui.getTerminal().writer().println("❯ 1. 是的，执行");
-        ui.getTerminal().writer().println("  2. 取消");
+        ui.printAbove("❯ 1. 是的，执行");
+        ui.printAbove("  2. 取消");
     }
 
     /**

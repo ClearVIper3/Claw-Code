@@ -26,6 +26,10 @@ public class ThoughtCodingUI implements AutoCloseable {
     private final ProgressIndicator progressIndicator;
     private final InputHandler inputHandler;
 
+    /** 流式输出行缓冲：token 片段攒成整行后经 printAbove 上屏。 */
+    private final StringBuilder assistantStreamBuffer = new StringBuilder();
+    private final Object assistantStreamLock = new Object();
+
     public Terminal getTerminal() {
         return terminal;
     }
@@ -54,7 +58,7 @@ public class ThoughtCodingUI implements AutoCloseable {
 
             // 初始化UI组件
             this.chatRenderer = new ChatRenderer(terminal);//聊天渲染器
-            this.statusBar = new StatusBar(terminal);//状态栏
+            this.statusBar = new StatusBar(terminal, lineReader);//状态栏
             this.progressIndicator = new ProgressIndicator(terminal);//进度指示器
             this.inputHandler = new InputHandler(
                     terminal,
@@ -224,10 +228,49 @@ public class ThoughtCodingUI implements AutoCloseable {
 
     public void displayAIMessage(ChatMessage message) {
         if (message.isAssistantMessage()) {
-            String content = message.getContent();
-            // 流式输出每个token，使用亮青色显示（与系统信息颜色一致）
-            terminal.writer().print(AnsiColors.BRIGHT_CYAN + content + AnsiColors.RESET);
-            terminal.writer().flush();
+            appendAssistantStream(message.getContent());
+        }
+    }
+
+    /**
+     * 回合线程安全输出：经 LineReader.printAbove 打印。JLine 会先擦掉当前输入行、
+     * 打印内容、再重绘 thought> 提示符与已输入缓冲，agent 回合的输出不会与
+     * 提示符行互相覆盖；非读入状态（主线程同步路径）等价于普通 println。
+     */
+    public void printAbove(String text) {
+        lineReader.printAbove(text == null ? "" : text);
+    }
+
+    /**
+     * 流式 token 是半行片段，而 printAbove 以整行为单位（擦提示符行 → 打印 → 重绘），
+     * 不能逐 token 上屏；这里把片段攒成整行，遇到换行才打印已完成的行。
+     */
+    private void appendAssistantStream(String fragment) {
+        synchronized (assistantStreamLock) {
+            if (fragment == null) {
+                return;
+            }
+            assistantStreamBuffer.append(fragment);
+            int newline;
+            while ((newline = assistantStreamBuffer.indexOf("\n")) >= 0) {
+                String line = assistantStreamBuffer.substring(0, newline);
+                assistantStreamBuffer.delete(0, newline + 1);
+                if (line.endsWith("\r")) {
+                    line = line.substring(0, line.length() - 1);
+                }
+                printAbove(AnsiColors.BRIGHT_CYAN + line + AnsiColors.RESET);
+            }
+        }
+    }
+
+    /** 流式结束（或异常中断）时把残余半行上屏；缓冲为空时是 no-op。 */
+    public void flushAssistantStream() {
+        synchronized (assistantStreamLock) {
+            if (assistantStreamBuffer.length() > 0) {
+                String line = assistantStreamBuffer.toString();
+                assistantStreamBuffer.setLength(0);
+                printAbove(AnsiColors.BRIGHT_CYAN + line + AnsiColors.RESET);
+            }
         }
     }
 

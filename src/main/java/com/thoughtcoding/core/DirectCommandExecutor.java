@@ -573,8 +573,8 @@ public class DirectCommandExecutor {
      * 列出支持的命令
      */
     public void listSupportedCommands() {
-        ui.getTerminal().writer().println("\n🔧 支持直接执行的命令:");
-        ui.getTerminal().writer().println("──────────────────────────────────");
+        ui.printAbove("\n🔧 支持直接执行的命令:");
+        ui.printAbove("──────────────────────────────────");
 
         Map<String, List<String>> categorizedCommands = new LinkedHashMap<>();
         categorizedCommands.put("Maven", Arrays.asList("mvn clean", "mvn compile", "mvn test", "mvn package"));
@@ -583,12 +583,11 @@ public class DirectCommandExecutor {
         categorizedCommands.put("系统", Arrays.asList("pwd", "whoami", "ls"));
 
         for (Map.Entry<String, List<String>> entry : categorizedCommands.entrySet()) {
-            ui.getTerminal().writer().println("\n" + entry.getKey() + ":");
-            entry.getValue().forEach(cmd -> ui.getTerminal().writer().println("  • " + cmd));
+            ui.printAbove("\n" + entry.getKey() + ":");
+            entry.getValue().forEach(cmd -> ui.printAbove("  • " + cmd));
         }
 
-        ui.getTerminal().writer().println("\n💡 这些命令会绕过AI直接执行，提供更快的响应");
-        ui.getTerminal().writer().flush();
+        ui.printAbove("\n💡 这些命令会绕过AI直接执行，提供更快的响应");
     }
 }
 
