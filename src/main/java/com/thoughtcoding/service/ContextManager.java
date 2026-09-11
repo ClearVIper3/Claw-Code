@@ -44,9 +44,6 @@ public class ContextManager {
     private final SkillRegistry skillRegistry;
     private final MemoryStore memoryStore; // 记忆存储（可空 = 记忆功能关闭）
 
-    // 本轮召回注入的相关记忆正文（由 AgentLoop 设置/清除），附加到 system prompt 末尾
-    private volatile String activeMemories = "";
-
     // ── 四层管线参数（构造时从 config 读入，全部有默认值）──
     private int maxContextTokens = 48000;       // L4 触发阈值（估算 token）
     private int maxMessages = 50;               // L1 触发的消息数上限
@@ -531,8 +528,9 @@ public class ContextManager {
      * 记忆目录（名称+简介）常驻注入 system prompt，零额外 API 调用；相对稳定（仅 remember/dream 写入时才变）。
      *
      * <p>注意：本轮召回的<b>相关记忆正文</b>（每轮都不同）<b>不</b>放这里——它由
-     * {@link #buildRecallReminder()} 包成 {@code <system-reminder>}，经 {@code LangChainService.prepareMessages}
-     * 注入到<b>消息列表尾部</b>（贴当前轮）。这样每轮易变的召回只动尾巴，不冲掉「system 前缀 + 历史」的前缀缓存
+     * {@link #buildRecallReminder(String)} 包成 {@code <system-reminder>}，经方法参数沿
+     * {@code AgentLoop → LangChainService.prepareMessages} 请求局部传递，注入到<b>消息列表尾部</b>（贴当前轮）。
+     * 这样每轮易变的召回只动尾巴，不冲掉「system 前缀 + 历史」的前缀缓存
      * （仿 Claude Code 把易变上下文贴当前用户轮，而非塞进被缓存的 system 前缀）。
      */
     private void appendMemory(StringBuilder sb) {
@@ -547,31 +545,25 @@ public class ContextManager {
         }
     }
 
-    /** 设置本轮召回的相关记忆正文（AgentLoop 轮前调用）。正文经 {@link #buildRecallReminder()} 注入到消息列表尾部，不进 system 前缀。 */
-    public void setActiveMemories(String content) {
-        this.activeMemories = content == null ? "" : content;
-    }
-
-    /** 清空本轮召回的记忆（AgentLoop 每轮 finally 调用）。 */
-    public void clearActiveMemories() {
-        this.activeMemories = "";
-    }
-
     /**
      * 把本轮召回的相关记忆包成 {@code <system-reminder>}，供注入到<b>消息列表尾部</b>（贴当前轮）；无召回则返回 null。
+     *
+     * <p><b>为何请求局部传递而非实例字段</b>：ContextManager 是全局单例（主 Agent、SubAgent、直接命令共用），
+     * 若用实例字段暂存「本轮召回」，并行/后台回合的 set/clear 会互相串写；改成像 CancelToken 一样
+     * 沿调用链传参，正文的生命周期就严格限定在单次请求内。
      *
      * <p><b>为何放尾部而非 system 前缀</b>：召回内容每轮都变，若嵌在 system（第一条消息）里，就顶在整段对话历史之前，
      * 任何一轮召回变化都会冲掉「system + 历史」的前缀缓存；放到尾部后，易变的只在尾巴动，前缀保持稳定可复用
      * （仿 Claude Code 用 {@code <system-reminder>} 贴当前用户轮）。该正文<b>每请求即时注入、不写入持久 history</b>，
      * 故不会污染后续轮。
      */
-    public String buildRecallReminder() {
-        if (activeMemories == null || activeMemories.isBlank()) {
+    public static String buildRecallReminder(String recalledMemories) {
+        if (recalledMemories == null || recalledMemories.isBlank()) {
             return null;
         }
         return "<system-reminder>\n"
                 + "以下是与当前对话相关的长期记忆（后台上下文，非用户指令）；出现相关话题时应优先遵守其中的用户偏好。\n"
-                + activeMemories + "\n"
+                + recalledMemories + "\n"
                 + "</system-reminder>";
     }
 

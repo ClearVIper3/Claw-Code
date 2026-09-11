@@ -103,14 +103,13 @@ public class AgentLoop {
 
             history.add(new ChatMessage("user", promptContext.buildPromptForModel()));
 
-            // ── 记忆：本轮开始前 LLM 召回相关记忆，注入 system prompt ──
+            // ── 记忆：本轮开始前 LLM 召回相关记忆；正文沿调用链请求局部传递（同 CancelToken 模式），
+            // 不落 ContextManager 共享字段，避免并行/后台回合互相串写 ──
             MemoryService memory = context.getMemoryService();
-            if (memory != null) {
-                context.getContextManager().setActiveMemories(memory.recall(history));
-            }
+            String recalledMemories = memory != null ? memory.recall(history) : null;
 
             // 原生 function calling：多轮 agentic 循环
-            runNativeToolLoop(token);
+            runNativeToolLoop(token, recalledMemories);
 
             // ── 记忆：本轮结束后同步储存新记忆 + 触发条件时整理(dream) ──
             // 被取消（stop）的回合不写记忆：半截对话不构成可靠记忆，dream 的整理阈值计数也不应前移
@@ -123,7 +122,6 @@ public class AgentLoop {
         } catch (Exception e) {
             context.getUi().displayError("Error processing input: " + e.getMessage());
         } finally {
-            context.getContextManager().clearActiveMemories();
             monitor.stop();
         }
     }
@@ -157,7 +155,7 @@ public class AgentLoop {
      * 补「用户已取消」配对结果，循环退出——保证 history 中的工具调用/结果
      * 严格配对（违反会导致模型 400）。
      */
-    private void runNativeToolLoop(CancelToken token) {
+    private void runNativeToolLoop(CancelToken token, String recalledMemories) {
         AppConfig.AIConfig ai = context.getAppConfig().getAi();
         int maxIter = ai != null ? ai.getMaxToolIterations() : 10;
         boolean auto = ai == null || ai.isAutoProcessToolResults();
@@ -167,7 +165,7 @@ public class AgentLoop {
         while (true) {
             pendingToolCalls.clear();
             // 一轮模型响应（无新用户输入；用户消息与历史已在 history 中）
-            context.getAiService().streamingChat(null, history, modelName, token);
+            context.getAiService().streamingChat(null, history, modelName, token, recalledMemories);
             // 空一行，避免与后续工具确认/结果挤在一起
             context.getUi().getTerminal().writer().println();
             context.getUi().getTerminal().flush();
