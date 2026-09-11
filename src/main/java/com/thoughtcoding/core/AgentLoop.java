@@ -113,7 +113,8 @@ public class AgentLoop {
             runNativeToolLoop(token);
 
             // ── 记忆：本轮结束后同步储存新记忆 + 触发条件时整理(dream) ──
-            if (memory != null) {
+            // 被取消（stop）的回合不写记忆：半截对话不构成可靠记忆，dream 的整理阈值计数也不应前移
+            if (memory != null && !token.isCancelled()) {
                 memory.remember(history);
                 memory.dream();
             }
