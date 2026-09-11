@@ -71,19 +71,4 @@ public class StatusBar {
 
         emit(message);
     }
-
-    public void showSessionInfo(String sessionId, int messageCount) {
-        String shortId = sessionId.length() > 8 ? sessionId.substring(0, 8) + "..." : sessionId;
-        String message = String.format("%s💬 Session: %s (%d messages)%s",
-                AnsiColors.BRIGHT_BLUE, shortId, messageCount, AnsiColors.RESET);
-
-        emit(message);
-    }
-
-    public void showModelInfo(String modelName) {
-        String message = String.format("%s🤖 Model: %s%s",
-                AnsiColors.BRIGHT_GREEN, modelName, AnsiColors.RESET);
-
-        emit(message);
-    }
 }
