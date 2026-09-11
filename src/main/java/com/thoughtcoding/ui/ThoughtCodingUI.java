@@ -60,11 +60,7 @@ public class ThoughtCodingUI implements AutoCloseable {
             this.chatRenderer = new ChatRenderer(terminal);//聊天渲染器
             this.statusBar = new StatusBar(terminal, lineReader);//状态栏
             this.progressIndicator = new ProgressIndicator(terminal);//进度指示器
-            this.inputHandler = new InputHandler(
-                    terminal,
-                    new StringsCompleter("exit", "quit", "clear", "help", "stop",
-                            "/commands", "/mcp", "/agents", "/agents list", "/agents cleanup")
-            );//输入处理器
+            this.inputHandler = new InputHandler(lineReader);//输入处理器（复用全局 reader，见 InputHandler 类注释）
 
         } catch (IOException e) {
             throw new RuntimeException("Failed to initialize terminal", e);
