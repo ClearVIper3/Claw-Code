@@ -59,8 +59,9 @@ public class ToolExecutionConfirmation {
         ConsoleInputRouter router = routerSupplier.get();
         if (router != null && !router.isOnOwnerThread()) {
             // 回合线程不直接 readLine（LineReader 非线程安全）：提示文本经 printAbove
-            // 打到输入行上方，等待 REPL 主线程把用户输入经路由器投递过来
-            if (prompt != null && !prompt.isBlank()) {
+            // 打到输入行上方，等待 REPL 主线程把用户输入经路由器投递过来。
+            // ui 可能为 null（测试只验证路由逻辑），不能因打印提示而中断等待注册
+            if (ui != null && prompt != null && !prompt.isBlank()) {
                 ui.printAbove(prompt.strip());
             }
             return router.awaitLine();
