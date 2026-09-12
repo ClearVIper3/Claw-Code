@@ -1,5 +1,6 @@
 package com.thoughtcoding.core;
 
+import com.thoughtcoding.hook.DuplicateToolCallGuard;
 import com.thoughtcoding.hook.HookRegistry;
 import com.thoughtcoding.hook.HookResult;
 import com.thoughtcoding.hook.HookType;
@@ -99,6 +100,32 @@ class ToolExecutionPipelineTest {
         assertFalse(outcome.result().isSuccess());
         assertEquals(1, postExecutions.get());
         assertEquals("执行失败: 退出码 1", history.getFirst().getContent());
+    }
+
+    @Test
+    void shouldBlockSecondIdenticalCallAndExecuteToolOnlyOnce() {
+        AtomicInteger executions = new AtomicInteger();
+        ToolRegistry tools = registryWith("echo", input -> {
+            executions.incrementAndGet();
+            return ToolResult.success("完成", 1);
+        });
+        HookRegistry hooks = new HookRegistry()
+                .registerFirst(HookType.PRE_TOOL_USE, new DuplicateToolCallGuard());
+        ToolExecutionPipeline pipeline = new ToolExecutionPipeline(null, hooks, tools);
+        List<ChatMessage> history = new ArrayList<>();
+
+        ToolExecutionPipeline.Outcome first =
+                pipeline.executeAndRecord(call("echo", "call-a"), null, history);
+        ToolExecutionPipeline.Outcome second =
+                pipeline.executeAndRecord(call("echo", "call-b"), null, history);
+
+        assertFalse(first.isBlocked());
+        assertTrue(second.isBlocked());
+        assertTrue(second.result().getError().contains("不可重复以相同的入参调用同一个工具"));
+        assertEquals(1, executions.get());
+        assertEquals(2, history.size());
+        assertEquals("完成", history.getFirst().getContent());
+        assertTrue(history.get(1).getContent().contains("不可重复以相同的入参调用同一个工具"));
     }
 
     private ToolRegistry registryWith(String name, ToolAction action) {

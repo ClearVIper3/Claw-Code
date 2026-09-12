@@ -1,6 +1,7 @@
 package com.thoughtcoding.core;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.thoughtcoding.hook.DuplicateToolCallGuard;
 import com.thoughtcoding.hook.HookRegistry;
 import com.thoughtcoding.hook.HookType;
 import com.thoughtcoding.model.ChatMessage;
@@ -64,6 +65,8 @@ public class SubAgent {
                         context::getConsoleInputRouter);
         HookRegistry hookRegistry = context.getHookRegistry().copy();
         hookRegistry.registerFirst(HookType.PRE_TOOL_USE, new PermissionHook(confirmation));
+        // 每任务独立的重复调用防护（新实例天然隔离，无需 reset）
+        hookRegistry.registerFirst(HookType.PRE_TOOL_USE, new DuplicateToolCallGuard());
         ToolExecutionPipeline toolPipeline = new ToolExecutionPipeline(
                 context, hookRegistry, context.getToolRegistry());
 

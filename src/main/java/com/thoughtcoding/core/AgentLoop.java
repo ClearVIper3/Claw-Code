@@ -1,6 +1,7 @@
 package com.thoughtcoding.core;
 
 import com.thoughtcoding.config.AppConfig;
+import com.thoughtcoding.hook.DuplicateToolCallGuard;
 import com.thoughtcoding.hook.HookContext;
 import com.thoughtcoding.hook.HookRegistry;
 import com.thoughtcoding.hook.HookResult;
@@ -36,6 +37,7 @@ public class AgentLoop {
     private final ToolExecutionConfirmation confirmation;  // 交互式确认组件
     private final ToolExecutionPipeline toolPipeline;
     private final HookRegistry hookRegistry;               // 基于注册表的 Hook 系统
+    private final DuplicateToolCallGuard duplicateCallGuard;  // 死循环兜底：拦截同入参重复工具调用
 
     // 缓存本轮模型请求的工具调用（原生路径一轮可能有多个）
     private final List<ToolCall> pendingToolCalls = new ArrayList<>();
@@ -58,6 +60,11 @@ public class AgentLoop {
         // 权限检查必须位于业务扩展之前，且确认组件属于当前 Agent 实例。
         this.hookRegistry.registerFirst(com.thoughtcoding.hook.HookType.PRE_TOOL_USE,
                 new PermissionHook(this.confirmation));
+        // 死循环兜底：同一消费方连续两次完全相同的工具调用，第二次直接拦截回喂报错。
+        // registerFirst 插到最前，先于 PermissionHook，避免对注定被拦的调用重复弹确认框。
+        this.duplicateCallGuard = new DuplicateToolCallGuard();
+        this.hookRegistry.registerFirst(com.thoughtcoding.hook.HookType.PRE_TOOL_USE,
+                this.duplicateCallGuard);
         this.toolPipeline = new ToolExecutionPipeline(
                 context, this.hookRegistry, context.getToolRegistry());
 
@@ -88,6 +95,7 @@ public class AgentLoop {
 
         try {
             pendingToolCalls.clear();
+            duplicateCallGuard.reset();   // 每轮用户对话重置重复调用记忆，跨轮的相同首调不误拦
 
             // ── Hook: UserPromptSubmit（进入 LLM 前）—— BLOCK 则跳过本轮 ──
             HookContext promptContext = HookContext.forUserPrompt(context, history, input);
