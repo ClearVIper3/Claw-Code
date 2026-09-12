@@ -70,4 +70,16 @@ public interface AIService {
                                             com.thoughtcoding.core.CancelToken token) {
         return streamingChat(input, history, modelName);
     }
+
+    /**
+     * 同 {@link #streamingChat(String, List, String, CancelToken)}，另带本轮召回的记忆正文：
+     * 由调用方（AgentLoop）沿调用链请求局部传递并注入消息尾部，不落共享可变状态，
+     * 避免并行/后台回合串写。recalledMemories 为 null/blank 等价于无召回。
+     */
+    default List<ChatMessage> streamingChat(String input, List<ChatMessage> history,
+                                            String modelName,
+                                            com.thoughtcoding.core.CancelToken token,
+                                            String recalledMemories) {
+        return streamingChat(input, history, modelName, token);
+    }
 }

@@ -78,20 +78,25 @@ public class SubAgent {
                 printLine(ui, "[SubAgent] 已被用户取消");
                 return "子Agent已被用户取消，未产出结论。";
             }
-            // 每轮首个 token 前打一个 [SubAgent] 前缀，其余 token 原样流式打印
+            // 每轮首个 token 前打一个 [SubAgent] 前缀，其余 token 原样流式打印。
+            // token 是半行片段而 printAbove 只能整行上屏，先攒进行缓冲、见换行才打印；
+            // 缓冲为本 SubAgent 私有，并行子代理之间互不串行污染。
+            final StringBuilder streamLineBuffer = new StringBuilder();
             final boolean[] headerPrinted = {false};
             SubagentTurn turn = context.getAiService().chatOnceForSubagent(
                     subPrompt, subHistory,
                     t -> {
                         if (!headerPrinted[0]) {
-                            printRaw(ui, "\n[SubAgent] ");
+                            streamLineBuffer.append("\n[SubAgent] ");
                             headerPrinted[0] = true;
                         }
-                        printRaw(ui, t);
+                        streamLineBuffer.append(t);
+                        emitCompletedLines(ui, streamLineBuffer);
                     }, token);
-            if (headerPrinted[0]) {
-                printRaw(ui, "\n");
-                flush(ui);
+            if (headerPrinted[0] && streamLineBuffer.length() > 0) {
+                // 残余半行上屏（printAbove 会自动补换行收尾）
+                ui.printAbove(streamLineBuffer.toString());
+                streamLineBuffer.setLength(0);
             }
 
             lastText = turn.getText();
@@ -136,22 +141,25 @@ public class SubAgent {
                 : lastText;
     }
 
-    // ── 显示辅助（纯文本、无装饰 emoji；直接走 terminal writer 以完全控制格式）──
+    // ── 显示辅助（纯文本、无装饰 emoji）──
 
     private void printLine(ThoughtCodingUI ui, String text) {
-        if (ui == null || ui.getTerminal() == null) return;
-        ui.getTerminal().writer().println(text);
-        ui.getTerminal().writer().flush();
+        if (ui == null) return;
+        ui.printAbove(text);
     }
 
-    private void printRaw(ThoughtCodingUI ui, String text) {
-        if (ui == null || ui.getTerminal() == null) return;
-        ui.getTerminal().writer().print(text);
-    }
-
-    private void flush(ThoughtCodingUI ui) {
-        if (ui == null || ui.getTerminal() == null) return;
-        ui.getTerminal().writer().flush();
+    /** 把行缓冲中已完成的行经 printAbove 上屏；半行片段留在缓冲里等后续 token。 */
+    private void emitCompletedLines(ThoughtCodingUI ui, StringBuilder buffer) {
+        if (ui == null) return;
+        int newline;
+        while ((newline = buffer.indexOf("\n")) >= 0) {
+            String line = buffer.substring(0, newline);
+            buffer.delete(0, newline + 1);
+            if (line.endsWith("\r")) {
+                line = line.substring(0, line.length() - 1);
+            }
+            ui.printAbove(line);
+        }
     }
 
     /** 解析工具参数 JSON 为 Map；失败则退化为 {"input": 原始串}（与主服务一致的兜底）。 */

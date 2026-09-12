@@ -1,7 +1,6 @@
 package com.thoughtcoding.ui;
 
 import com.thoughtcoding.model.ChatMessage;
-import com.thoughtcoding.service.PerformanceMonitor;
 
 import com.thoughtcoding.ui.component.*;
 import org.jline.terminal.Terminal;
@@ -11,8 +10,6 @@ import org.jline.reader.LineReaderBuilder;
 import org.jline.reader.impl.completer.StringsCompleter;
 
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -23,8 +20,11 @@ public class ThoughtCodingUI implements AutoCloseable {
     private final LineReader lineReader;
     private final ChatRenderer chatRenderer;
     private final StatusBar statusBar;
-    private final ProgressIndicator progressIndicator;
     private final InputHandler inputHandler;
+
+    /** 流式输出行缓冲：token 片段攒成整行后经 printAbove 上屏。 */
+    private final StringBuilder assistantStreamBuffer = new StringBuilder();
+    private final Object assistantStreamLock = new Object();
 
     public Terminal getTerminal() {
         return terminal;
@@ -54,168 +54,44 @@ public class ThoughtCodingUI implements AutoCloseable {
 
             // 初始化UI组件
             this.chatRenderer = new ChatRenderer(terminal);//聊天渲染器
-            this.statusBar = new StatusBar(terminal);//状态栏
-            this.progressIndicator = new ProgressIndicator(terminal);//进度指示器
-            this.inputHandler = new InputHandler(
-                    terminal,
-                    new StringsCompleter("exit", "quit", "clear", "help", "stop",
-                            "/commands", "/mcp", "/agents", "/agents list", "/agents cleanup")
-            );//输入处理器
+            this.statusBar = new StatusBar(terminal, lineReader);//状态栏
+            this.inputHandler = new InputHandler(lineReader);//输入处理器（复用全局 reader，见 InputHandler 类注释）
 
         } catch (IOException e) {
             throw new RuntimeException("Failed to initialize terminal", e);
         }
     }
 
+    /** 启动横幅文本。行尾的 \s 转义是文本块中保留对齐空格的写法，勿删。 */
+    private static final String BANNER_ART = """
+                ░██████████░██                                         ░██           ░██      ░██████                    ░██ ░██                     \s
+                    ░██    ░██                                         ░██           ░██     ░██   ░██                   ░██                         \s
+                    ░██    ░████████   ░███████  ░██    ░██  ░████████ ░████████  ░████████ ░██         ░███████   ░████████ ░██░████████   ░████████\s
+                    ░██    ░██    ░██ ░██    ░██ ░██    ░██ ░██    ░██ ░██    ░██    ░██    ░██        ░██    ░██ ░██    ░██ ░██░██    ░██ ░██    ░██\s
+                    ░██    ░██    ░██ ░██    ░██ ░██    ░██ ░██    ░██ ░██    ░██    ░██    ░██        ░██    ░██ ░██    ░██ ░██░██    ░██ ░██    ░██\s
+                    ░██    ░██    ░██ ░██    ░██ ░██   ░███ ░██   ░███ ░██    ░██    ░██     ░██   ░██ ░██    ░██ ░██   ░███ ░██░██    ░██ ░██   ░███\s
+                    ░██    ░██    ░██  ░███████   ░█████░██  ░█████░██ ░██    ░██     ░████   ░██████   ░███████   ░█████░██ ░██░██    ░██  ░█████░██\s
+                                                               ░██                                                                            ░██\s
+                                                         ░███████                                                                       ░███████ \s
+                                                                                                                                                 \s        """;
+
+    private static final String[] BANNER_TITLES = {
+            "Interactive Code Assistant CLI",
+            "- Java Edition -",
+            "Version 2.0.0"
+    };
+
+    private static final int BANNER_WIDTH = 122;
+
     public void showBanner() {
-        try {
-            // 显示ASCII艺术横幅
-            terminal.writer().println(AnsiColors.GREEN + """
-                ░██████████░██                                         ░██           ░██      ░██████                    ░██ ░██                     \s
-                    ░██    ░██                                         ░██           ░██     ░██   ░██                   ░██                         \s
-                    ░██    ░████████   ░███████  ░██    ░██  ░████████ ░████████  ░████████ ░██         ░███████   ░████████ ░██░████████   ░████████\s
-                    ░██    ░██    ░██ ░██    ░██ ░██    ░██ ░██    ░██ ░██    ░██    ░██    ░██        ░██    ░██ ░██    ░██ ░██░██    ░██ ░██    ░██\s
-                    ░██    ░██    ░██ ░██    ░██ ░██    ░██ ░██    ░██ ░██    ░██    ░██    ░██        ░██    ░██ ░██    ░██ ░██░██    ░██ ░██    ░██\s
-                    ░██    ░██    ░██ ░██    ░██ ░██   ░███ ░██   ░███ ░██    ░██    ░██     ░██   ░██ ░██    ░██ ░██   ░███ ░██░██    ░██ ░██   ░███\s
-                    ░██    ░██    ░██  ░███████   ░█████░██  ░█████░██ ░██    ░██     ░████   ░██████   ░███████   ░█████░██ ░██░██    ░██  ░█████░██\s
-                                                               ░██                                                                            ░██\s
-                                                         ░███████                                                                       ░███████ \s
-                                                                                                                                                 \s        """ + AnsiColors.RESET);
+        terminal.writer().println(AnsiColors.GREEN + BANNER_ART + AnsiColors.RESET);
 
-            // 要居中的三行文字
-            String[] titleLines = {
-                    "Interactive Code Assistant CLI",
-                    "- Java Edition -",
-                    "Version 2.0.0"
-            };
-
-            // 计算ASCII艺术的宽度（取第一行的长度，因为通常最宽）
-            int asciiWidth = 122; // 根据你的ASCII艺术，第一行大约是122个字符宽度
-
-            // 居中显示每行文字
-            for (String line : titleLines) {
-                int padding = (asciiWidth - line.length()) / 2;
-                String spaces = " ".repeat(Math.max(0, padding));
-                terminal.writer().println(AnsiColors.CYAN + spaces + line + AnsiColors.RESET);
-            }
-
-            terminal.writer().println();
-
-        } catch (Exception e) {
-            // 如果彩色输出失败，使用普通输出
-            System.out.println("""
-                ░██████████░██                                         ░██           ░██      ░██████                    ░██ ░██                     \s
-                    ░██    ░██                                         ░██           ░██     ░██   ░██                   ░██                         \s
-                    ░██    ░████████   ░███████  ░██    ░██  ░████████ ░████████  ░████████ ░██         ░███████   ░████████ ░██░████████   ░████████\s
-                    ░██    ░██    ░██ ░██    ░██ ░██    ░██ ░██    ░██ ░██    ░██    ░██    ░██        ░██    ░██ ░██    ░██ ░██░██    ░██ ░██    ░██\s
-                    ░██    ░██    ░██ ░██    ░██ ░██    ░██ ░██    ░██ ░██    ░██    ░██    ░██        ░██    ░██ ░██    ░██ ░██░██    ░██ ░██    ░██\s
-                    ░██    ░██    ░██ ░██    ░██ ░██   ░███ ░██   ░███ ░██    ░██    ░██     ░██   ░██ ░██    ░██ ░██   ░███ ░██░██    ░██ ░██   ░███\s
-                    ░██    ░██    ░██  ░███████   ░█████░██  ░█████░██ ░██    ░██     ░████   ░██████   ░███████   ░█████░██ ░██░██    ░██  ░█████░██\s
-                                                               ░██                                                                            ░██\s
-                                                         ░███████                                                                       ░███████ \s
-                                                                                                                                                 \s                           """);
-
-            // 普通输出的居中显示
-            String[] titleLines = {
-                    "Interactive Code Assistant CLI",
-                    "- Java Edition -",
-                    "Version 1.0.0"
-            };
-
-            int asciiWidth = 122;
-            for (String line : titleLines) {
-                int padding = (asciiWidth - line.length()) / 2;
-                String spaces = " ".repeat(Math.max(0, padding));
-                System.out.println(spaces + line);
-            }
-            System.out.println();
+        for (String line : BANNER_TITLES) {
+            int padding = (BANNER_WIDTH - line.length()) / 2;
+            terminal.writer().println(AnsiColors.CYAN + " ".repeat(Math.max(0, padding)) + line + AnsiColors.RESET);
         }
-    }
-
-    public void displayUserMessageWithBox(ChatMessage message) {
-        String content = message.getContent();
-        String timestamp = formatTimestamp(message.getTimestamp());
-
-        // 用户消息框（右侧，绿色）
-        displayMessageBox(content, timestamp, true);
-    }
-
-    public void displayAssistantMessageWithBox(ChatMessage message) {
-        String content = message.getContent();
-        String timestamp = formatTimestamp(message.getTimestamp());
-
-        // AI消息框（左侧，蓝色）
-        displayMessageBox(content, timestamp, false);
-    }
-
-    private void displayMessageBox(String content, String timestamp, boolean isUser) {
-        String color = isUser ? AnsiColors.GREEN : AnsiColors.BLUE;
-        String prefix = isUser ? "You: " : "AI: ";
 
         terminal.writer().println();
-        terminal.writer().println(color + prefix + content + AnsiColors.RESET);
-        terminal.writer().println();
-    }
-
-    private List<String> splitMessage(String message, int maxWidth) {
-        List<String> lines = new ArrayList<>();
-        String[] words = message.split(" ");
-        StringBuilder currentLine = new StringBuilder();
-
-        for (String word : words) {
-            if (currentLine.length() + word.length() + 1 > maxWidth) {
-                lines.add(currentLine.toString());
-                currentLine = new StringBuilder(word);
-            } else {
-                if (currentLine.length() > 0) {
-                    currentLine.append(" ");
-                }
-                currentLine.append(word);
-            }
-        }
-
-        if (currentLine.length() > 0) {
-            lines.add(currentLine.toString());
-        }
-
-        return lines;
-    }
-
-    private String padLine(String line, int width, String alignment) {
-        if (line.length() >= width) {
-            return line;
-        }
-
-        int padding = width - line.length();
-        switch (alignment) {
-            case "right":
-                return " ".repeat(padding) + line;
-            case "center":
-                int leftPadding = padding / 2;
-                int rightPadding = padding - leftPadding;
-                return " ".repeat(leftPadding) + line + " ".repeat(rightPadding);
-            case "left":
-            default:
-                return line + " ".repeat(padding);
-        }
-    }
-
-    private String formatTimestamp(String timestamp) {
-        try {
-            // 简化时间戳显示
-            if (timestamp == null) {
-                return "Just now";
-            }
-
-            // 如果是完整的时间戳，提取时间部分
-            if (timestamp.contains("T")) {
-                return timestamp.substring(11, 16); // 提取 HH:mm
-            }
-
-            return timestamp;
-        } catch (Exception e) {
-            return "Now";
-        }
     }
 
     public void displayUserMessage(ChatMessage message) {
@@ -224,10 +100,49 @@ public class ThoughtCodingUI implements AutoCloseable {
 
     public void displayAIMessage(ChatMessage message) {
         if (message.isAssistantMessage()) {
-            String content = message.getContent();
-            // 流式输出每个token，使用亮青色显示（与系统信息颜色一致）
-            terminal.writer().print(AnsiColors.BRIGHT_CYAN + content + AnsiColors.RESET);
-            terminal.writer().flush();
+            appendAssistantStream(message.getContent());
+        }
+    }
+
+    /**
+     * 回合线程安全输出：经 LineReader.printAbove 打印。JLine 会先擦掉当前输入行、
+     * 打印内容、再重绘 thought> 提示符与已输入缓冲，agent 回合的输出不会与
+     * 提示符行互相覆盖；非读入状态（主线程同步路径）等价于普通 println。
+     */
+    public void printAbove(String text) {
+        lineReader.printAbove(text == null ? "" : text);
+    }
+
+    /**
+     * 流式 token 是半行片段，而 printAbove 以整行为单位（擦提示符行 → 打印 → 重绘），
+     * 不能逐 token 上屏；这里把片段攒成整行，遇到换行才打印已完成的行。
+     */
+    private void appendAssistantStream(String fragment) {
+        synchronized (assistantStreamLock) {
+            if (fragment == null) {
+                return;
+            }
+            assistantStreamBuffer.append(fragment);
+            int newline;
+            while ((newline = assistantStreamBuffer.indexOf("\n")) >= 0) {
+                String line = assistantStreamBuffer.substring(0, newline);
+                assistantStreamBuffer.delete(0, newline + 1);
+                if (line.endsWith("\r")) {
+                    line = line.substring(0, line.length() - 1);
+                }
+                printAbove(AnsiColors.BRIGHT_CYAN + line + AnsiColors.RESET);
+            }
+        }
+    }
+
+    /** 流式结束（或异常中断）时把残余半行上屏；缓冲为空时是 no-op。 */
+    public void flushAssistantStream() {
+        synchronized (assistantStreamLock) {
+            if (assistantStreamBuffer.length() > 0) {
+                String line = assistantStreamBuffer.toString();
+                assistantStreamBuffer.setLength(0);
+                printAbove(AnsiColors.BRIGHT_CYAN + line + AnsiColors.RESET);
+            }
         }
     }
 
@@ -249,22 +164,6 @@ public class ThoughtCodingUI implements AutoCloseable {
 
     public void displaySessionList(java.util.List<String> sessions) {
         chatRenderer.renderSessionList(sessions);
-    }
-
-    public void displayPerformanceInfo(PerformanceMonitor.PerformanceData data) {
-        statusBar.showPerformanceInfo(data);
-    }
-
-    public void showProgress(String message) {
-        progressIndicator.show(message);
-    }
-
-    public void updateProgress(String message) {
-        progressIndicator.update(message);
-    }
-
-    public void hideProgress() {
-        progressIndicator.hide();
     }
 
     public String readInput(String prompt) {

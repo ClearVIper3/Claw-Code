@@ -5,7 +5,6 @@ import com.thoughtcoding.ui.AnsiColors;
 import org.jline.terminal.Terminal;
 
 import java.time.LocalDateTime;
-import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 
@@ -25,15 +24,6 @@ public class ChatRenderer {
         String timestamp = LocalDateTime.now().format(timeFormatter);
         String formattedMessage = String.format("%s[%s] %sYou:%s %s",
                 AnsiColors.BRIGHT_BLACK, timestamp, AnsiColors.BRIGHT_BLUE, AnsiColors.RESET, message.getContent());
-
-        terminal.writer().println(formattedMessage);
-        terminal.writer().flush();
-    }
-
-    public void renderAIMessage(ChatMessage message) {
-        String timestamp = String.format(String.valueOf(timeFormatter));
-        String formattedMessage = String.format("%s[%s] %sAI:%s %s",
-                AnsiColors.BRIGHT_BLACK, timestamp, AnsiColors.BRIGHT_GREEN, AnsiColors.RESET, message.getContent());
 
         terminal.writer().println(formattedMessage);
         terminal.writer().flush();
@@ -60,28 +50,6 @@ public class ChatRenderer {
             terminal.writer().println(line);
         }
 
-        terminal.writer().flush();
-    }
-
-    public void renderThinking() {
-        terminal.writer().print(AnsiColors.BRIGHT_YELLOW + "🤔 Thinking..." + AnsiColors.RESET);
-        terminal.writer().flush();
-    }
-
-    public void clearThinking() {
-        // 清除思考提示
-        terminal.writer().print("\r" + " ".repeat(20) + "\r");
-        terminal.writer().flush();
-    }
-
-    public void renderStreamingContent(String content) {
-        // 用于流式输出的渲染
-        terminal.writer().print("\r" + AnsiColors.BRIGHT_GREEN + "AI: " + AnsiColors.RESET + content);
-        terminal.writer().flush();
-    }
-
-    public void completeStreaming() {
-        terminal.writer().println();
         terminal.writer().flush();
     }
 }

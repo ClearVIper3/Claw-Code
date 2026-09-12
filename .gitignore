@@ -21,5 +21,11 @@ sessions/
 # 压缩管线落盘（完整对话 transcript + 大工具结果，不提交）
 transcripts/
 
+# 记忆系统（个人记忆，不提交；如需项目事实随仓库共享可去掉本行）
+.memory/
+
 # 本地配置（不提交）
 config.yaml
+
+# Claude 本地指导文件（不提交）
+/CLAUDE.md

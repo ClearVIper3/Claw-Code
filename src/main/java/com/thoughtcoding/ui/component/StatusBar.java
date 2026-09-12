@@ -2,6 +2,7 @@ package com.thoughtcoding.ui.component;
 
 import com.thoughtcoding.service.PerformanceMonitor;
 import com.thoughtcoding.ui.AnsiColors;
+import org.jline.reader.LineReader;
 import org.jline.terminal.Terminal;
 
 import java.time.LocalDateTime;
@@ -12,11 +13,21 @@ import java.time.format.DateTimeFormatter;
  */
 public class StatusBar {
     private final Terminal terminal;
+    private final LineReader lineReader;
     private final DateTimeFormatter timeFormatter;
 
-    public StatusBar(Terminal terminal) {
+    public StatusBar(Terminal terminal, LineReader lineReader) {
         this.terminal = terminal;
+        this.lineReader = lineReader;
         this.timeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss");
+    }
+
+    /**
+     * 统一输出：经 LineReader.printAbove 打印，agent 回合线程输出时 JLine
+     * 会重绘 thought> 提示符行，避免状态消息与提示符互相覆盖。
+     */
+    private void emit(String message) {
+        lineReader.printAbove(message);
     }
 
     public void showInfo(String info) {
@@ -24,8 +35,7 @@ public class StatusBar {
         String message = String.format("%s[%s] ℹ️  %s%s",
                 AnsiColors.BRIGHT_BLACK, timestamp, AnsiColors.BRIGHT_CYAN, info);
 
-        terminal.writer().println(message + AnsiColors.RESET);
-        terminal.writer().flush();
+        emit(message + AnsiColors.RESET);
     }
 
     public void showError(String error) {
@@ -33,8 +43,7 @@ public class StatusBar {
         String message = String.format("%s[%s] ❌ %s%s",
                 AnsiColors.BRIGHT_BLACK, timestamp, AnsiColors.BRIGHT_RED, error);
 
-        terminal.writer().println(message + AnsiColors.RESET);
-        terminal.writer().flush();
+        emit(message + AnsiColors.RESET);
     }
 
     public void showSuccess(String message) {
@@ -42,8 +51,7 @@ public class StatusBar {
         String formatted = String.format("%s[%s] ✅ %s%s",
                 AnsiColors.BRIGHT_BLACK, timestamp, AnsiColors.BRIGHT_GREEN, message);
 
-        terminal.writer().println(formatted + AnsiColors.RESET);
-        terminal.writer().flush();
+        emit(formatted + AnsiColors.RESET);
     }
 
     public void showWarning(String warning) {
@@ -51,8 +59,7 @@ public class StatusBar {
         String message = String.format("%s[%s] ⚠️  %s%s",
                 AnsiColors.BRIGHT_BLACK, timestamp, AnsiColors.BRIGHT_YELLOW, warning);
 
-        terminal.writer().println(message + AnsiColors.RESET);
-        terminal.writer().flush();
+        emit(message + AnsiColors.RESET);
     }
 
     public void showPerformanceInfo(PerformanceMonitor.PerformanceData data) {
@@ -62,24 +69,6 @@ public class StatusBar {
                 data.getExecutionTimeMs(), data.getTotalTokens(), data.getTotalToolCalls(),
                 AnsiColors.RESET);
 
-        terminal.writer().println(message);
-        terminal.writer().flush();
-    }
-
-    public void showSessionInfo(String sessionId, int messageCount) {
-        String shortId = sessionId.length() > 8 ? sessionId.substring(0, 8) + "..." : sessionId;
-        String message = String.format("%s💬 Session: %s (%d messages)%s",
-                AnsiColors.BRIGHT_BLUE, shortId, messageCount, AnsiColors.RESET);
-
-        terminal.writer().println(message);
-        terminal.writer().flush();
-    }
-
-    public void showModelInfo(String modelName) {
-        String message = String.format("%s🤖 Model: %s%s",
-                AnsiColors.BRIGHT_GREEN, modelName, AnsiColors.RESET);
-
-        terminal.writer().println(message);
-        terminal.writer().flush();
+        emit(message);
     }
 }

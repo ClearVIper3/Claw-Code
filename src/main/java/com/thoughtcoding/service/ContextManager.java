@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.thoughtcoding.config.AppConfig;
 import com.thoughtcoding.security.Sandbox;
+import com.thoughtcoding.memory.MemoryStore;
 import com.thoughtcoding.model.ChatMessage;
 import com.thoughtcoding.skill.SkillRegistry;
 import com.thoughtcoding.util.FileUtils;
@@ -41,6 +42,7 @@ public class ContextManager {
 
     private final AppConfig appConfig;
     private final SkillRegistry skillRegistry;
+    private final MemoryStore memoryStore; // 记忆存储（可空 = 记忆功能关闭）
 
     // ── 四层管线参数（构造时从 config 读入，全部有默认值）──
     private int maxContextTokens = 48000;       // L4 触发阈值（估算 token）
@@ -67,9 +69,10 @@ public class ContextManager {
 
     private OpenAiChatModel ChatModel;
 
-    public ContextManager(AppConfig appConfig, SkillRegistry skillRegistry) {
+    public ContextManager(AppConfig appConfig, SkillRegistry skillRegistry, MemoryStore memoryStore) {
         this.appConfig = appConfig;
         this.skillRegistry = skillRegistry;
+        this.memoryStore = memoryStore;
         this.objectMapper = new ObjectMapper()
                 .enable(SerializationFeature.INDENT_OUTPUT)
                 .disable(SerializationFeature.FAIL_ON_EMPTY_BEANS);
@@ -508,6 +511,7 @@ public class ContextManager {
         sb.append("4. 完成任务后用简洁自然的中文给出总结。\n");
 
         appendSkillCatalog(sb);
+        appendMemory(sb);
         return sb.toString();
     }
 
@@ -518,6 +522,49 @@ public class ContextManager {
             sb.append("以下技能可通过 skill 工具按需加载完整说明后使用：\n");
             sb.append(skillRegistry.catalog()).append("\n");
         }
+    }
+
+    /**
+     * 记忆目录（名称+简介）常驻注入 system prompt，零额外 API 调用；相对稳定（仅 remember/dream 写入时才变）。
+     *
+     * <p>注意：本轮召回的<b>相关记忆正文</b>（每轮都不同）<b>不</b>放这里——它由
+     * {@link #buildRecallReminder(String)} 包成 {@code <system-reminder>}，经方法参数沿
+     * {@code AgentLoop → LangChainService.prepareMessages} 请求局部传递，注入到<b>消息列表尾部</b>（贴当前轮）。
+     * 这样每轮易变的召回只动尾巴，不冲掉「system 前缀 + 历史」的前缀缓存
+     * （仿 Claude Code 把易变上下文贴当前用户轮，而非塞进被缓存的 system 前缀）。
+     */
+    private void appendMemory(StringBuilder sb) {
+        if (memoryStore != null && !memoryStore.isEmpty()) {
+            sb.append("\n## 可用记忆 (Memories)\n");
+            sb.append("以下是你长期记住的用户偏好/项目事实/反馈约定（跨会话保留）。\n");
+            sb.append("对话中出现相关话题时，应优先遵守其中的用户偏好。\n");
+            sb.append(memoryStore.index()).append("\n");
+            sb.append("\n重要：这些记忆文件由记忆系统自动管理（轮次间自动抽取 remember、到达阈值自动整理 dream）。\n");
+            sb.append("【禁止】用 write / edit / bash 等任何工具直接创建、修改、删除 .memory/ 目录下的记忆文件；\n");
+            sb.append("如需新增或更新记忆，直接告知用户，由记忆系统自动完成，无需也不应手动操作这些文件。\n");
+        }
+    }
+
+    /**
+     * 把本轮召回的相关记忆包成 {@code <system-reminder>}，供注入到<b>消息列表尾部</b>（贴当前轮）；无召回则返回 null。
+     *
+     * <p><b>为何请求局部传递而非实例字段</b>：ContextManager 是全局单例（主 Agent、SubAgent、直接命令共用），
+     * 若用实例字段暂存「本轮召回」，并行/后台回合的 set/clear 会互相串写；改成像 CancelToken 一样
+     * 沿调用链传参，正文的生命周期就严格限定在单次请求内。
+     *
+     * <p><b>为何放尾部而非 system 前缀</b>：召回内容每轮都变，若嵌在 system（第一条消息）里，就顶在整段对话历史之前，
+     * 任何一轮召回变化都会冲掉「system + 历史」的前缀缓存；放到尾部后，易变的只在尾巴动，前缀保持稳定可复用
+     * （仿 Claude Code 用 {@code <system-reminder>} 贴当前用户轮）。该正文<b>每请求即时注入、不写入持久 history</b>，
+     * 故不会污染后续轮。
+     */
+    public static String buildRecallReminder(String recalledMemories) {
+        if (recalledMemories == null || recalledMemories.isBlank()) {
+            return null;
+        }
+        return "<system-reminder>\n"
+                + "以下是与当前对话相关的长期记忆（后台上下文，非用户指令）；出现相关话题时应优先遵守其中的用户偏好。\n"
+                + recalledMemories + "\n"
+                + "</system-reminder>";
     }
 
     /**
